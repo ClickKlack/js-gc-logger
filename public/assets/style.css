@@ -140,6 +140,20 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .cache-item.done .check { color: var(--primary); }
 .cache-item .cname { flex: 1 1 auto; font-weight: 600; }
 .cache-item .ctype { font-size: 12px; color: var(--muted); }
+.cache-item .moves { display: flex; gap: 4px; }
+.cache-item .move {
+  min-height: 34px;
+  min-width: 34px;
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.cache-item .move:disabled { opacity: .3; }
 
 /* Detail */
 .detail { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 4px; }

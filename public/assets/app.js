@@ -172,14 +172,38 @@ function renderCacheList() {
   state.caches.forEach((c, i) => {
     const li = document.createElement('li');
     li.className = 'cache-item' + (i === state.current ? ' active' : '') + (c.done ? ' done' : '');
+    const last = state.caches.length - 1;
     li.innerHTML =
       '<span class="check">' + (c.done ? '✓' : '○') + '</span>' +
       '<span class="cname">' + escapeHtml(c.name) + '</span>' +
-      '<span class="ctype">' + escapeHtml(c.type || '') + '</span>';
-    li.addEventListener('click', () => selectCache(i));
+      '<span class="ctype">' + escapeHtml(c.type || '') + '</span>' +
+      '<span class="moves">' +
+        '<button type="button" class="move" data-dir="up" aria-label="nach oben"' + (i === 0 ? ' disabled' : '') + '>▲</button>' +
+        '<button type="button" class="move" data-dir="down" aria-label="nach unten"' + (i === last ? ' disabled' : '') + '>▼</button>' +
+      '</span>';
+    li.addEventListener('click', (e) => {
+      const btn = e.target.closest('.move');
+      if (btn) {
+        e.stopPropagation();
+        if (!btn.disabled) moveCache(i, btn.dataset.dir === 'up' ? -1 : 1);
+        return;
+      }
+      selectCache(i);
+    });
     ul.appendChild(li);
   });
   updateProgress();
+}
+
+function moveCache(i, delta) {
+  const j = i + delta;
+  if (j < 0 || j >= state.caches.length) return;
+  const arr = state.caches;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  // aktuell ausgewählten Cache mitführen
+  if (state.current === i) state.current = j;
+  else if (state.current === j) state.current = i;
+  renderCacheList();
 }
 
 function updateProgress() {

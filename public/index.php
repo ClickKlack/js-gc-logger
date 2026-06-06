@@ -18,7 +18,7 @@ $debug      = !empty($config['debug']);
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=4">
+    <link rel="stylesheet" href="assets/style.css?v=5">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -158,6 +158,6 @@ $debug      = !empty($config['debug']);
     window.GC_STORE = <?= $storeLogs ? 'true' : 'false' ?>;
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
 </script>
-<script src="assets/app.js?v=4"></script>
+<script src="assets/app.js?v=5"></script>
 </body>
 </html>
