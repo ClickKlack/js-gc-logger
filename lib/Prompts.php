@@ -103,4 +103,62 @@ final class Prompts
         $notes
         TXT;
     }
+
+    /**
+     * Sammel-Prompt: erzeugt in EINEM Aufruf Logs für mehrere Caches.
+     * Ausgabe als JSON-Array [{"code": "...", "log": "..."}].
+     *
+     * @param array<int, array<string,string>> $caches je Eintrag inkl. 'notes'
+     */
+    public static function logBatch(string $context, array $caches): string
+    {
+        $context = trim($context) !== '' ? trim($context) : '(kein gesonderter Tour-Kontext)';
+
+        $blocks = [];
+        foreach ($caches as $c) {
+            $code = (string) ($c['code'] ?? '');
+            $name = (string) ($c['name'] ?? 'Cache');
+
+            $details = [];
+            if (!empty($c['type']))       { $details[] = 'Typ: ' . $c['type']; }
+            if (!empty($c['difficulty'])) { $details[] = 'D: ' . $c['difficulty']; }
+            if (!empty($c['terrain']))    { $details[] = 'T: ' . $c['terrain']; }
+            if (!empty($c['container']))  { $details[] = 'Behälter: ' . $c['container']; }
+            if (!empty($c['placed_by']))  { $details[] = 'Owner: ' . $c['placed_by']; }
+            $detailLine = $details !== [] ? implode(', ', $details) : '(keine weiteren Details)';
+
+            $listing = trim((string) ($c['listing'] ?? ''));
+            $listing = $listing !== '' ? $listing : '(kein Listing-Text vorhanden)';
+
+            $notes = trim((string) ($c['notes'] ?? ''));
+            $notes = $notes !== '' ? $notes : '(keine besonderen Notizen)';
+
+            $blocks[] = <<<BLOCK
+            ===== CACHE code=$code =====
+            Name: $name
+            $detailLine
+            Listing (nur als Inspiration, nicht wörtlich kopieren, keine Spoiler/Lösung/Koordinaten): $listing
+            Meine Notizen (vollständig einarbeiten): $notes
+            BLOCK;
+        }
+        $cacheBlocks = implode("\n\n", $blocks);
+
+        return <<<TXT
+        Schreibe für JEDEN der folgenden Caches ein eigenes, individuelles Log nach den oben
+        genannten Stil-Regeln. Beachte pro Cache:
+        - Nutze den Tour-Kontext als Hintergrund, wiederhole ihn aber nicht wörtlich in jedem Log; variiere die Logs untereinander.
+        - Beziehe dich auf die Details und das Listing des jeweiligen Caches.
+        - Verarbeite die Notizen des jeweiligen Caches IMMER vollständig: jede Information daraus MUSS im zugehörigen Log vorkommen.
+
+        Gib AUSSCHLIESSLICH ein JSON-Array zurück – ein Objekt pro Cache, exakt in dieser Form:
+        [{"code": "<GC-Code des Caches>", "log": "<fertiger Logtext>"}]
+        Keine Erklärungen, kein Markdown, nur das JSON-Array. Verwende exakt die unten angegebenen Codes.
+
+        Tour-Kontext:
+        $context
+
+        Caches:
+        $cacheBlocks
+        TXT;
+    }
 }

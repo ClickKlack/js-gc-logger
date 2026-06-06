@@ -18,7 +18,7 @@ $debug      = !empty($config['debug']);
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=3">
+    <link rel="stylesheet" href="assets/style.css?v=4">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -92,6 +92,11 @@ $debug      = !empty($config['debug']);
 
             <ul id="cache-list" class="cache-list"></ul>
 
+            <div class="row">
+                <button id="btn-generate-all" class="primary" type="button">✨ Offene Logs generieren (1 Anfrage)</button>
+            </div>
+            <p id="generate-all-status" class="muted">Spart Anfragen: erzeugt alle Caches ohne Log auf einmal. Notizen vorher eintragen ist optional.</p>
+
             <div id="cache-detail" class="detail hidden">
                 <h3 id="cache-title"></h3>
                 <div id="cache-meta" class="meta"></div>
@@ -153,6 +158,6 @@ $debug      = !empty($config['debug']);
     window.GC_STORE = <?= $storeLogs ? 'true' : 'false' ?>;
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
 </script>
-<script src="assets/app.js?v=3"></script>
+<script src="assets/app.js?v=4"></script>
 </body>
 </html>

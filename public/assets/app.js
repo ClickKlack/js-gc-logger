@@ -129,6 +129,41 @@ $('#btn-context')?.addEventListener('click', async () => {
 
 $('#context-text')?.addEventListener('input', (e) => { state.context = e.target.value; });
 
+/* ---------- Sammel-Modus: alle offenen Logs in EINER Anfrage ---------- */
+
+$('#btn-generate-all')?.addEventListener('click', async () => {
+  const status = $('#generate-all-status');
+  const open = state.caches.filter((c) => !(c.log || '').trim());
+  if (!open.length) {
+    status.textContent = 'Alle Caches haben bereits ein Log.';
+    return;
+  }
+  status.textContent = 'Generiere ' + open.length + ' Log(s) in einer Anfrage …';
+  $('#btn-generate-all').disabled = true;
+  try {
+    const { logs } = await api('generate_all', {
+      context: state.context,
+      caches: JSON.stringify(open),
+    });
+    let applied = 0;
+    let missing = [];
+    state.caches.forEach((c) => {
+      if (!(c.log || '').trim()) {
+        if (logs[c.code] != null) { c.log = logs[c.code]; applied++; }
+        else missing.push(c.code);
+      }
+    });
+    if (state.current >= 0) $('#log-text').value = state.caches[state.current].log || '';
+    renderCacheList();
+    status.textContent = '✓ ' + applied + ' Log(s) erzeugt.'
+      + (missing.length ? ' Ohne Ergebnis: ' + missing.join(', ') + ' (einzeln nachgenerieren).' : '');
+  } catch (ex) {
+    status.textContent = 'Fehler: ' + ex.message;
+  } finally {
+    $('#btn-generate-all').disabled = false;
+  }
+});
+
 /* ---------- Schritt 3: Cache-Liste ---------- */
 
 function renderCacheList() {

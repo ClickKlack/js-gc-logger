@@ -16,10 +16,11 @@ return [
     // Bei Bedarf an aktuelle Verfügbarkeit anpassen (z. B. 'gemini-flash-latest').
     'gemini_model' => 'gemini-2.5-flash',
 
-    // Optional: Ausweich-Modell(e), falls das Hauptmodell gerade überlastet ist
-    // (HTTP 503 "high demand"). Kommagetrennt; wird der Reihe nach probiert.
-    // Beispiel: 'gemini-2.5-flash-lite,gemini-2.0-flash'
-    'gemini_model_fallback' => '',
+    // Ausweich-Modelle, falls das Hauptmodell überlastet ist (503) ODER sein
+    // Tages-/Minutenlimit erreicht hat (429). Kommagetrennt, wird der Reihe nach
+    // probiert. WICHTIG: Jedes Modell hat ein EIGENES kostenloses Tageslimit –
+    // die Kette vervielfacht also dein Tagesbudget.
+    'gemini_model_fallback' => 'gemini-2.5-flash-lite,gemini-2.0-flash',
 
     // Passwort-Hash erzeugen (am eigenen Rechner):
     //   php -r "echo password_hash('DEIN-PASSWORT', PASSWORD_DEFAULT), PHP_EOL;"

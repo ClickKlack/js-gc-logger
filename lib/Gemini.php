@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
-/** Interner Marker für vorübergehende (wiederholbare) Gemini-Fehler. */
-final class GeminiTransientException extends RuntimeException {}
+/** Interner Marker für vorübergehende (wiederholbare) Gemini-Fehler (500/503/Netz). */
+class GeminiTransientException extends RuntimeException {}
+
+/** 429: Rate-/Tageslimit dieses Modells erschöpft -> möglichst auf nächstes Modell wechseln. */
+final class GeminiQuotaException extends GeminiTransientException {}
 
 /**
  * Schlanker Client für die kostenlose Google-Gemini-REST-API (generateContent).
@@ -38,7 +41,10 @@ final class Gemini
         }
     }
 
-    public function generate(string $systemInstruction, string $userPrompt): string
+    /**
+     * @param array{json?: bool, maxOutputTokens?: int} $opts
+     */
+    public function generate(string $systemInstruction, string $userPrompt, array $opts = []): string
     {
         if ($this->apiKey === '') {
             throw new RuntimeException('Kein Gemini-API-Key konfiguriert. Bitte in config.php eintragen.');
@@ -50,14 +56,33 @@ final class Gemini
             static fn ($m) => is_string($m) && trim($m) !== ''
         )));
 
-        $lastTransient = null;
+        $lastError = null;
+        $lastWasQuota = false;
+        $lastModel = array_key_last($models);
 
-        foreach ($models as $model) {
+        foreach ($models as $mi => $model) {
+            $isLastModel = ($mi === $lastModel);
+
             for ($attempt = 1; $attempt <= self::MAX_ATTEMPTS; $attempt++) {
                 try {
-                    return $this->callOnce($model, $systemInstruction, $userPrompt);
+                    return $this->callOnce($model, $systemInstruction, $userPrompt, $opts);
+                } catch (GeminiQuotaException $e) {
+                    // Tages-/Minutenlimit dieses Modells erschöpft.
+                    $lastError = $e;
+                    $lastWasQuota = true;
+                    if (!$isLastModel) {
+                        $this->log("Limit (429) bei $model -> sofort nächstes Modell");
+                        break; // keine Zeit mit Retries verlieren, direkt nächstes Modell
+                    }
+                    // Letztes Modell: kurzer Backoff (hilft bei Minuten-, nicht bei Tageslimit)
+                    $this->log("Limit (429) beim letzten Modell $model (Versuch $attempt/" . self::MAX_ATTEMPTS . ')');
+                    if ($attempt < self::MAX_ATTEMPTS) {
+                        sleep($attempt * 2);
+                    }
                 } catch (GeminiTransientException $e) {
-                    $lastTransient = $e;
+                    // Überlastung (500/503) / Netzwerk -> selbes Modell erneut versuchen.
+                    $lastError = $e;
+                    $lastWasQuota = false;
                     $this->log("vorübergehender Fehler ($model, Versuch $attempt/" . self::MAX_ATTEMPTS . '): ' . $e->getMessage());
                     if ($attempt < self::MAX_ATTEMPTS) {
                         sleep($attempt); // 1s, dann 2s
@@ -65,14 +90,20 @@ final class Gemini
                 }
                 // RuntimeException (dauerhaft: falscher Key, Modell 404, Block) fliegt direkt durch
             }
-            if (count($models) > 1) {
-                $this->log("wechsle zum nächsten Modell nach Überlastung von $model");
-            }
+        }
+
+        if ($lastWasQuota) {
+            throw new RuntimeException(
+                'Das Tages-/Minutenlimit der kostenlosen KI ist erreicht. '
+                . 'Tipp: in config.php unter "gemini_model_fallback" weitere Modelle eintragen '
+                . '(jedes Modell hat ein eigenes Tageslimit), oder später erneut versuchen.'
+                . ($lastError ? ' (' . $lastError->getMessage() . ')' : '')
+            );
         }
 
         throw new RuntimeException(
             'Das KI-Modell ist gerade überlastet. Bitte in ein paar Sekunden noch einmal versuchen.'
-            . ($lastTransient ? ' (' . $lastTransient->getMessage() . ')' : '')
+            . ($lastError ? ' (' . $lastError->getMessage() . ')' : '')
         );
     }
 
@@ -80,7 +111,10 @@ final class Gemini
      * Ein einzelner API-Aufruf. Wirft GeminiTransientException bei wiederholbaren
      * Fehlern, RuntimeException bei dauerhaften.
      */
-    private function callOnce(string $model, string $systemInstruction, string $userPrompt): string
+    /**
+     * @param array{json?: bool, maxOutputTokens?: int} $opts
+     */
+    private function callOnce(string $model, string $systemInstruction, string $userPrompt, array $opts = []): string
     {
         $url = sprintf(
             'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s',
@@ -88,12 +122,21 @@ final class Gemini
             rawurlencode($this->apiKey)
         );
 
-        $genConfig = ['temperature' => 0.9, 'maxOutputTokens' => 2048];
+        $maxTok = (int) ($opts['maxOutputTokens'] ?? 2048);
+        // Gemini-2.0-Modelle können nur bis 8192 Output-Tokens -> sonst 400.
+        if (stripos($model, '2.0') !== false) {
+            $maxTok = min($maxTok, 8192);
+        }
+        $genConfig = ['temperature' => 0.9, 'maxOutputTokens' => $maxTok];
         // Bei Gemini-2.5-Modellen das interne "Thinking" abschalten. Sonst zählen
-        // die Reasoning-Tokens gegen maxOutputTokens und der Log wirkt abgeschnitten
-        // (finishReason MAX_TOKENS). Für kurze Logs ist Thinking ohnehin unnötig.
+        // die Reasoning-Tokens gegen maxOutputTokens und die Ausgabe wirkt abgeschnitten
+        // (finishReason MAX_TOKENS). Für unsere Logs ist Thinking ohnehin unnötig.
         if (stripos($model, '2.5') !== false) {
             $genConfig['thinkingConfig'] = ['thinkingBudget' => 0];
+        }
+        // Strukturierte JSON-Ausgabe (für den Sammel-/Batch-Modus).
+        if (!empty($opts['json'])) {
+            $genConfig['responseMimeType'] = 'application/json';
         }
 
         $payload = [
@@ -126,8 +169,14 @@ final class Gemini
         $data = json_decode((string) $resp, true);
         $apiMsg = $data['error']['message'] ?? ('HTTP ' . $httpCode);
 
-        // Vorübergehende Server-/Limit-Fehler -> wiederholbar
-        if (in_array($httpCode, [429, 500, 503], true)) {
+        // 429 = Rate-/Tageslimit erschöpft -> möglichst nächstes Modell
+        if ($httpCode === 429) {
+            $this->log("Limit/429: " . substr((string) $resp, 0, 500));
+            throw new GeminiQuotaException($apiMsg);
+        }
+
+        // 500/503 = Server überlastet -> selbes Modell erneut versuchen
+        if ($httpCode === 500 || $httpCode === 503) {
             $this->log("vorübergehend ($httpCode): " . substr((string) $resp, 0, 500));
             throw new GeminiTransientException($apiMsg);
         }

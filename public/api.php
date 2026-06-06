@@ -139,6 +139,50 @@ try {
             respond(['ok' => true, 'log' => $log]);
         }
 
+        case 'generate_all': {
+            // Sammel-Modus: alle übergebenen (offenen) Caches in EINER Anfrage.
+            $context = (string) ($_POST['context'] ?? '');
+            $caches  = json_decode((string) ($_POST['caches'] ?? '[]'), true) ?: [];
+            if ($caches === []) {
+                fail('Keine Caches zum Generieren übergeben.');
+            }
+
+            // Ausgabebudget großzügig an die Cache-Zahl anpassen.
+            $maxTokens = min(32768, 2048 + 1200 * count($caches));
+
+            $gemini = new Gemini((string) $config['gemini_api_key'], (string) $config['gemini_model'], 'dbg_log', $GEMINI_FALLBACK);
+            $raw    = $gemini->generate(
+                Prompts::system(),
+                Prompts::logBatch($context, $caches),
+                ['json' => true, 'maxOutputTokens' => $maxTokens]
+            );
+
+            // JSON robust parsen (evtl. Code-Fences entfernen).
+            $clean   = trim($raw);
+            $clean   = (string) preg_replace('/^```(?:json)?\s*|\s*```$/i', '', $clean);
+            $decoded = json_decode($clean, true);
+            if (!is_array($decoded)) {
+                dbg_log('generate_all: JSON nicht parsebar: ' . substr($raw, 0, 1000));
+                fail('Die KI-Antwort war kein gültiges JSON. Bei sehr großen Touren ggf. in kleineren Schüben generieren.', 502);
+            }
+
+            // In Map code => log normalisieren (Array von {code, log} ODER {code: log}).
+            $logs = [];
+            foreach ($decoded as $k => $v) {
+                if (is_array($v) && isset($v['code'], $v['log'])) {
+                    $logs[(string) $v['code']] = (string) $v['log'];
+                } elseif (is_string($v)) {
+                    $logs[(string) $k] = $v;
+                }
+            }
+            if ($logs === []) {
+                dbg_log('generate_all: keine Logs in JSON: ' . substr($raw, 0, 1000));
+                fail('Die KI-Antwort enthielt keine verwertbaren Logs.', 502);
+            }
+
+            respond(['ok' => true, 'logs' => $logs, 'count' => count($logs)]);
+        }
+
         case 'save': {
             if (empty($config['store_logs'])) {
                 fail('Speichern ist in der Konfiguration deaktiviert.');
