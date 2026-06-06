@@ -1,0 +1,200 @@
+/* Geocaching-Log-Helfer — mobil-first */
+
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --ink: #1c2230;
+  --muted: #6b7280;
+  --line: #e2e5ea;
+  --primary: #2e7d4f;
+  --primary-ink: #ffffff;
+  --secondary: #3a6ea5;
+  --error: #c0392b;
+  --radius: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171c;
+    --card: #1f232b;
+    --ink: #e7e9ee;
+    --muted: #9aa1ad;
+    --line: #2c313b;
+    --primary: #3da06a;
+    --secondary: #5b8fcc;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-text-size-adjust: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  padding-top: max(12px, env(safe-area-inset-top));
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.topbar h1 { font-size: 18px; margin: 0; }
+
+.wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
+
+.view.hidden,
+.card.hidden,
+.hidden { display: none !important; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.card h2 { margin: 0 0 12px; font-size: 17px; }
+.card h3 { margin: 4px 0 8px; font-size: 16px; }
+
+label { display: block; margin: 10px 0; font-weight: 600; }
+label input[type="text"],
+label input[type="password"],
+textarea,
+input[type="file"] {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 12px;
+  font: inherit;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+textarea { resize: vertical; }
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  min-height: 46px;
+}
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+.primary   { background: var(--primary);   color: var(--primary-ink); width: 100%; }
+.secondary { background: var(--secondary);  color: #fff; }
+.link {
+  background: transparent;
+  color: var(--secondary);
+  padding: 8px 6px;
+  min-height: auto;
+  text-decoration: underline;
+}
+
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.row .primary { flex: 1 1 auto; width: auto; }
+
+.muted { color: var(--muted); font-size: 14px; }
+.error { color: var(--error); font-weight: 600; min-height: 1.2em; }
+
+.companions { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 12px 0; }
+.companions legend { font-weight: 700; padding: 0 6px; }
+.chk { display: flex; align-items: center; gap: 8px; font-weight: 500; margin: 6px 0; }
+.chk input { width: 20px; height: 20px; }
+.freitext { margin-top: 8px; }
+
+.badge {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* Cache-Liste */
+.cache-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.cache-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.cache-item.active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(46,125,79,.2); }
+.cache-item.done .cname { text-decoration: line-through; color: var(--muted); }
+.cache-item .check { font-size: 18px; width: 20px; text-align: center; }
+.cache-item.done .check { color: var(--primary); }
+.cache-item .cname { flex: 1 1 auto; font-weight: 600; }
+.cache-item .ctype { font-size: 12px; color: var(--muted); }
+
+/* Detail */
+.detail { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 4px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 8px; }
+.metaitem { font-size: 14px; color: var(--muted); }
+.metaitem b { color: var(--ink); }
+.hint {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.loglabel textarea { min-height: 120px; }
+
+/* Cache-Listing (aufklappbar) */
+.listing-wrap { margin: 4px 0 10px; }
+.listing-wrap summary { cursor: pointer; font-weight: 600; }
+.listing {
+  margin-top: 8px;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+
+/* Touren-Liste */
+.tour-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.tour-item {
+  padding: 11px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.filelabel input[type="file"] { padding: 10px; }
+
+/* Debug */
+#debug-panel { border-color: #c0392b; }
+.debug-out {
+  margin-top: 10px;
+  max-height: 50vh;
+  overflow: auto;
+  padding: 10px;
+  background: #111;
+  color: #b9f6b9;
+  border-radius: 8px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }

@@ -1,0 +1,16 @@
+# Secrets & lokale Daten — niemals committen
+config.php
+data/
+local_scripts/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Beispiel-/Testdateien
+*.gpx
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/

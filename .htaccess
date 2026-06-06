@@ -1,0 +1,21 @@
+# Zweite Verteidigungslinie, falls der Web-Root NICHT auf public/ gesetzt werden kann
+# und alle Dateien im öffentlich erreichbaren Bereich liegen.
+#
+# Sperrt den direkten Zugriff auf Konfiguration, Datenbank und Backend-Code.
+
+# Konfiguration mit Key/Passwort-Hash
+<Files "config.php">
+    Require all denied
+</Files>
+<Files "config.example.php">
+    Require all denied
+</Files>
+
+# SQLite-Dateien
+<FilesMatch "\.(sqlite|sqlite-journal|sqlite-wal|sqlite-shm)$">
+    Require all denied
+</FilesMatch>
+
+# Backend-Verzeichnisse / sensible Dateien (Apache 2.4)
+RedirectMatch 403 ^/?(lib|data)/
+RedirectMatch 403 ^/?schema\.sql$
