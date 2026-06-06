@@ -188,12 +188,28 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 /* Touren-Liste */
 .tour-list { list-style: none; margin: 12px 0 0; padding: 0; }
 .tour-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 11px 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
   margin-bottom: 6px;
   cursor: pointer;
 }
+.tour-item .tour-info { flex: 1 1 auto; }
+.tour-del {
+  flex: 0 0 auto;
+  min-height: 38px;
+  min-width: 42px;
+  padding: 6px 10px;
+  font-size: 16px;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.tour-del:hover { border-color: var(--error); }
 
 .filelabel input[type="file"] { padding: 10px; }
 

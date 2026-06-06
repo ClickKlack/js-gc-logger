@@ -211,6 +211,19 @@ try {
             respond(['ok' => true, 'tour' => $tour]);
         }
 
+        case 'delete_tour': {
+            if (empty($config['store_logs'])) {
+                fail('Speichern/Löschen ist in der Konfiguration deaktiviert.');
+            }
+            $id = (int) ($_POST['id'] ?? $_GET['id'] ?? 0);
+            if ($id <= 0) {
+                fail('Ungültige Tour-ID.');
+            }
+            $db = new Db((string) $config['db_path']);
+            $db->deleteTour($id);
+            respond(['ok' => true]);
+        }
+
         case 'debug_log': {
             if (!$DEBUG) {
                 fail("Debug ist nicht aktiviert (config.php: 'debug' => true).");

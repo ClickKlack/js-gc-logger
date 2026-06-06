@@ -120,4 +120,15 @@ final class Db
 
         return $tour;
     }
+
+    /** Löscht eine Tour samt ihrer Cache-Logs. Gibt true zurück, wenn etwas gelöscht wurde. */
+    public function deleteTour(int $id): bool
+    {
+        // cache_log explizit löschen (unabhängig von ON DELETE CASCADE)
+        $this->pdo->prepare('DELETE FROM cache_log WHERE tour_id = ?')->execute([$id]);
+        $stmt = $this->pdo->prepare('DELETE FROM tour WHERE id = ?');
+        $stmt->execute([$id]);
+
+        return $stmt->rowCount() > 0;
+    }
 }

@@ -18,7 +18,7 @@ $debug      = !empty($config['debug']);
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=5">
+    <link rel="stylesheet" href="assets/style.css?v=7">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -45,6 +45,16 @@ $debug      = !empty($config['debug']);
 
     <!-- APP -->
     <section id="view-app" class="view<?= $authed ? '' : ' hidden' ?>">
+
+        <?php if ($storeLogs): ?>
+        <!-- Gespeicherte Tour öffnen (ohne GPX-Upload) -->
+        <section id="step-load" class="card">
+            <h2>Gespeicherte Tour öffnen</h2>
+            <button id="btn-load-tours" class="secondary" type="button">Meine Touren anzeigen</button>
+            <p id="load-status" class="muted"></p>
+            <ul id="tour-list-top" class="tour-list hidden"></ul>
+        </section>
+        <?php endif; ?>
 
         <!-- Schritt 1: GPX + Tour-Infos -->
         <section id="step-setup" class="card">
@@ -158,6 +168,6 @@ $debug      = !empty($config['debug']);
     window.GC_STORE = <?= $storeLogs ? 'true' : 'false' ?>;
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
 </script>
-<script src="assets/app.js?v=5"></script>
+<script src="assets/app.js?v=7"></script>
 </body>
 </html>

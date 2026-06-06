@@ -339,8 +339,8 @@ $('#btn-save')?.addEventListener('click', async () => {
   }
 });
 
-$('#btn-tours')?.addEventListener('click', async () => {
-  const ul = $('#tour-list');
+async function fetchAndRenderTours(ul, statusEl) {
+  if (statusEl) statusEl.textContent = 'Lade Touren …';
   try {
     const { tours } = await api('list_tours');
     ul.innerHTML = '';
@@ -351,17 +351,38 @@ $('#btn-tours')?.addEventListener('click', async () => {
       const li = document.createElement('li');
       li.className = 'tour-item';
       li.innerHTML =
-        '<b>#' + t.id + '</b> ' + escapeHtml(t.title || 'Tour') +
-        ' <span class="muted">(' + t.done_count + '/' + t.cache_count + ' · ' +
-        escapeHtml(t.created_at || '') + ')</span>';
-      li.addEventListener('click', () => openTour(t.id));
+        '<span class="tour-info">' +
+          '<b>#' + t.id + '</b> ' + escapeHtml(t.title || 'Tour') +
+          ' <span class="muted">(' + t.done_count + '/' + t.cache_count + ' · ' +
+          escapeHtml(t.created_at || '') + ')</span>' +
+        '</span>' +
+        '<button type="button" class="tour-del" aria-label="Tour löschen" title="Tour löschen">🗑</button>';
+      li.addEventListener('click', async (e) => {
+        if (e.target.closest('.tour-del')) {
+          e.stopPropagation();
+          if (!confirm('Tour #' + t.id + ' "' + (t.title || 'Tour') + '" wirklich löschen?')) return;
+          try {
+            await api('delete_tour', { id: String(t.id) });
+            fetchAndRenderTours(ul, statusEl); // Liste neu laden
+          } catch (ex) {
+            if (statusEl) statusEl.textContent = 'Fehler: ' + ex.message;
+          }
+          return;
+        }
+        openTour(t.id);
+      });
       ul.appendChild(li);
     });
     show(ul);
+    if (statusEl) statusEl.textContent = '';
   } catch (ex) {
-    $('#save-status').textContent = 'Fehler: ' + ex.message;
+    if (statusEl) statusEl.textContent = 'Fehler: ' + ex.message;
   }
-});
+}
+
+// Liste im Start-Screen (oben) und im Schritt 4 (unten)
+$('#btn-load-tours')?.addEventListener('click', () => fetchAndRenderTours($('#tour-list-top'), $('#load-status')));
+$('#btn-tours')?.addEventListener('click', () => fetchAndRenderTours($('#tour-list'), $('#save-status')));
 
 async function openTour(id) {
   try {
@@ -375,10 +396,14 @@ async function openTour(id) {
     }));
     $('#tour-info').value = state.tourInfo;
     $('#context-text').value = state.context;
+    // Start-Boxen ausblenden, Bearbeitungsschritte zeigen
+    hide($('#step-setup'));
+    const sl = $('#step-load'); if (sl) hide(sl);
     show($('#step-context'));
     show($('#step-caches'));
     show($('#step-save'));
     hide($('#tour-list'));
+    hide($('#tour-list-top'));
     selectCache(nextOpenIndex(-1) === -1 ? 0 : nextOpenIndex(-1));
     $('#save-status').textContent = 'Tour #' + id + ' geladen.';
   } catch (ex) {
