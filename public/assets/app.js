@@ -144,6 +144,7 @@ $('#btn-generate-all')?.addEventListener('click', async () => {
     const { logs } = await api('generate_all', {
       context: state.context,
       caches: JSON.stringify(open),
+      companions: JSON.stringify(state.companions),
     });
     let applied = 0;
     let missing = [];
@@ -266,6 +267,7 @@ $('#btn-log')?.addEventListener('click', async () => {
       context: state.context,
       cache: JSON.stringify(c),
       notes: c.notes || '',
+      companions: JSON.stringify(state.companions),
     });
     c.log = log;
     $('#log-text').value = log;

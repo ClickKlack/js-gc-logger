@@ -57,10 +57,12 @@ final class Prompts
 
     /**
      * @param array<string,string> $cache
+     * @param array<string>        $companions
      */
-    public static function log(string $context, array $cache, string $notes): string
+    public static function log(string $context, array $cache, string $notes, array $companions = []): string
     {
         $context = trim($context) !== '' ? trim($context) : '(kein gesonderter Tour-Kontext)';
+        $companionLine = self::companionLine($companions);
         $notes   = trim($notes) !== '' ? trim($notes) : '(keine besonderen Notizen)';
         $name    = $cache['name'] ?? 'dieser Cache';
 
@@ -91,6 +93,8 @@ final class Prompts
         Tour-Kontext:
         $context
 
+        $companionLine
+
         Cache: $name
         $detailText
 
@@ -109,10 +113,12 @@ final class Prompts
      * Ausgabe als JSON-Array [{"code": "...", "log": "..."}].
      *
      * @param array<int, array<string,string>> $caches je Eintrag inkl. 'notes'
+     * @param array<string>                    $companions
      */
-    public static function logBatch(string $context, array $caches): string
+    public static function logBatch(string $context, array $caches, array $companions = []): string
     {
         $context = trim($context) !== '' ? trim($context) : '(kein gesonderter Tour-Kontext)';
+        $companionLine = self::companionLine($companions);
 
         $blocks = [];
         foreach ($caches as $c) {
@@ -145,10 +151,18 @@ final class Prompts
 
         return <<<TXT
         Schreibe für JEDEN der folgenden Caches ein eigenes, individuelles Log nach den oben
-        genannten Stil-Regeln. Beachte pro Cache:
-        - Nutze den Tour-Kontext als Hintergrund, wiederhole ihn aber nicht wörtlich in jedem Log; variiere die Logs untereinander.
-        - Beziehe dich auf die Details und das Listing des jeweiligen Caches.
+        genannten Stil-Regeln.
+
+        WICHTIG: Jedes Log wird einzeln beim jeweiligen Cache auf geocaching.com veröffentlicht
+        und dort OHNE die anderen Logs gelesen. Jedes Log muss daher für sich allein vollständig
+        sein – genauso ausführlich, als würdest du nur dieses eine Log schreiben. Die Menge der
+        Caches ist KEIN Grund, die Logs kürzer zu machen. Beachte pro Cache:
+        - Beginne JEDES Log mit einer kurzen Einleitung zur Tour (Anlass, Stimmung, Wetter o. Ä. aus dem Tour-Kontext). Formuliere diese Einleitung in jedem Log anders, lass sie aber nicht weg.
+        - Waren Begleiter dabei, nenne sie in JEDEM Log namentlich.
+        - Variieren heißt: anders formulieren – NICHT Inhalte weglassen.
+        - Beziehe dich auf die Details und das Listing des jeweiligen Caches; die Länge richtet sich wie gewohnt nach der Länge des Listings.
         - Verarbeite die Notizen des jeweiligen Caches IMMER vollständig: jede Information daraus MUSS im zugehörigen Log vorkommen.
+        - Absätze im Logtext als \\n\\n innerhalb des JSON-Strings kodieren.
 
         Gib AUSSCHLIESSLICH ein JSON-Array zurück – ein Objekt pro Cache, exakt in dieser Form:
         [{"code": "<GC-Code des Caches>", "log": "<fertiger Logtext>"}]
@@ -157,8 +171,20 @@ final class Prompts
         Tour-Kontext:
         $context
 
+        $companionLine
+
         Caches:
         $cacheBlocks
         TXT;
+    }
+
+    /**
+     * @param array<string> $companions
+     */
+    private static function companionLine(array $companions): string
+    {
+        return $companions !== []
+            ? 'Begleiter (im Log namentlich erwähnen): ' . implode(', ', $companions)
+            : 'Begleiter: keine (alleine unterwegs, Ich-Form)';
     }
 }

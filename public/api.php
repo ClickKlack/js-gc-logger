@@ -134,8 +134,9 @@ try {
             $context = (string) ($_POST['context'] ?? '');
             $cache   = json_decode((string) ($_POST['cache'] ?? '{}'), true) ?: [];
             $notes   = (string) ($_POST['notes'] ?? '');
+            $companions = json_decode((string) ($_POST['companions'] ?? '[]'), true) ?: [];
             $gemini  = new Gemini((string) $config['gemini_api_key'], (string) $config['gemini_model'], 'dbg_log', $GEMINI_FALLBACK);
-            $log     = $gemini->generate(Prompts::system(), Prompts::log($context, $cache, $notes));
+            $log     = $gemini->generate(Prompts::system(), Prompts::log($context, $cache, $notes, $companions));
             respond(['ok' => true, 'log' => $log]);
         }
 
@@ -143,17 +144,18 @@ try {
             // Sammel-Modus: alle übergebenen (offenen) Caches in EINER Anfrage.
             $context = (string) ($_POST['context'] ?? '');
             $caches  = json_decode((string) ($_POST['caches'] ?? '[]'), true) ?: [];
+            $companions = json_decode((string) ($_POST['companions'] ?? '[]'), true) ?: [];
             if ($caches === []) {
                 fail('Keine Caches zum Generieren übergeben.');
             }
 
             // Ausgabebudget großzügig an die Cache-Zahl anpassen.
-            $maxTokens = min(32768, 2048 + 1200 * count($caches));
+            $maxTokens = min(32768, 2048 + 1500 * count($caches));
 
             $gemini = new Gemini((string) $config['gemini_api_key'], (string) $config['gemini_model'], 'dbg_log', $GEMINI_FALLBACK);
             $raw    = $gemini->generate(
                 Prompts::system(),
-                Prompts::logBatch($context, $caches),
+                Prompts::logBatch($context, $caches, $companions),
                 ['json' => true, 'maxOutputTokens' => $maxTokens]
             );
 
