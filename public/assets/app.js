@@ -129,7 +129,28 @@ $('#btn-context')?.addEventListener('click', async () => {
 
 $('#context-text')?.addEventListener('input', (e) => { state.context = e.target.value; });
 
-/* ---------- Sammel-Modus: alle offenen Logs in EINER Anfrage ---------- */
+/* ---------- Sammel-Modus: offene Logs in wenigen Sammel-Anfragen ---------- */
+
+// Caches außerhalb Deutschlands bekommen zweisprachige Logs -> zählen doppelt.
+function isForeign(c) {
+  const country = (c.country || '').trim().toLowerCase();
+  return country !== '' && country !== 'germany' && country !== 'deutschland';
+}
+
+// Offene Caches in Gruppen aufteilen, deren Gewicht batch_size nicht übersteigt.
+function chunkCaches(list, size) {
+  const chunks = [];
+  let cur = [];
+  let weight = 0;
+  list.forEach((c) => {
+    const w = isForeign(c) ? 2 : 1;
+    if (cur.length && weight + w > size) { chunks.push(cur); cur = []; weight = 0; }
+    cur.push(c);
+    weight += w;
+  });
+  if (cur.length) chunks.push(cur);
+  return chunks;
+}
 
 $('#btn-generate-all')?.addEventListener('click', async () => {
   const status = $('#generate-all-status');
@@ -138,31 +159,41 @@ $('#btn-generate-all')?.addEventListener('click', async () => {
     status.textContent = 'Alle Caches haben bereits ein Log.';
     return;
   }
-  status.textContent = 'Generiere ' + open.length + ' Log(s) in einer Anfrage …';
+  const chunks = chunkCaches(open, window.GC_BATCH_SIZE || 5);
   $('#btn-generate-all').disabled = true;
+  let applied = 0;
+  const missing = [];
+  const errors = [];
   try {
-    const { logs } = await api('generate_all', {
-      context: state.context,
-      caches: JSON.stringify(open),
-      companions: JSON.stringify(state.companions),
-    });
-    let applied = 0;
-    let missing = [];
-    state.caches.forEach((c) => {
-      if (!(c.log || '').trim()) {
-        if (logs[c.code] != null) { c.log = logs[c.code]; applied++; }
-        else missing.push(c.code);
+    for (let k = 0; k < chunks.length; k++) {
+      const chunk = chunks[k];
+      status.textContent = 'Gruppe ' + (k + 1) + '/' + chunks.length + ': generiere '
+        + chunk.length + ' Log(s) …' + (applied ? ' (' + applied + ' fertig)' : '');
+      try {
+        const { logs } = await api('generate_all', {
+          context: state.context,
+          caches: JSON.stringify(chunk),
+          companions: JSON.stringify(state.companions),
+        });
+        chunk.forEach((c) => {
+          // nur übernehmen, falls zwischenzeitlich nicht manuell befüllt
+          if (logs[c.code] != null && !(c.log || '').trim()) { c.log = logs[c.code]; applied++; }
+          else if (!(c.log || '').trim()) missing.push(c.code);
+        });
+      } catch (ex) {
+        // Fehler in einer Gruppe: Rest trotzdem versuchen, Caches bleiben leer
+        errors.push(ex.message);
+        chunk.forEach((c) => missing.push(c.code));
       }
-    });
-    if (state.current >= 0) $('#log-text').value = state.caches[state.current].log || '';
-    renderCacheList();
-    status.textContent = '✓ ' + applied + ' Log(s) erzeugt.'
-      + (missing.length ? ' Ohne Ergebnis: ' + missing.join(', ') + ' (einzeln nachgenerieren).' : '');
-  } catch (ex) {
-    status.textContent = 'Fehler: ' + ex.message;
+      if (state.current >= 0) $('#log-text').value = state.caches[state.current].log || '';
+      renderCacheList();
+    }
   } finally {
     $('#btn-generate-all').disabled = false;
   }
+  status.textContent = '✓ ' + applied + ' Log(s) erzeugt.'
+    + (missing.length ? ' Leer geblieben: ' + missing.join(', ') + ' – nochmal klicken oder einzeln generieren.' : '')
+    + (errors.length ? ' Fehler: ' + [...new Set(errors)].join(' | ') : '');
 });
 
 /* ---------- Schritt 3: Cache-Liste ---------- */

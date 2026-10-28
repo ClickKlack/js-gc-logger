@@ -30,6 +30,11 @@ return [
     // Pfad zur SQLite-Datei (außerhalb von public/ — wird bei Bedarf angelegt).
     'db_path' => __DIR__ . '/data/app.sqlite',
 
+    // Sammel-Modus: max. Caches pro KI-Anfrage. Caches außerhalb Deutschlands
+    // (zweisprachige Logs) zählen doppelt. Größere Werte = weniger Anfragen, aber
+    // die letzten Logs einer langen Antwort werden schnell schlechter.
+    'batch_size' => 5,
+
     // Optionales Speichern der Touren in SQLite aktivieren?
     'store_logs' => true,
 

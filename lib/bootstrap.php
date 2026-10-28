@@ -20,6 +20,7 @@ require __DIR__ . '/Auth.php';
 require __DIR__ . '/Gpx.php';
 require __DIR__ . '/Gemini.php';
 require __DIR__ . '/Prompts.php';
+require __DIR__ . '/BatchLogs.php';
 require __DIR__ . '/Db.php';
 
 return $config;

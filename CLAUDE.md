@@ -31,6 +31,7 @@ lib/                 Backend-Klassen (außerhalb des Web-Roots)
   Gpx.php            GPX-Parser (SimpleXML, Groundspeak-Extensions)
   Gemini.php         REST-Client (cURL) für generateContent
   Prompts.php        System-Instruction + Stufe-1/2-Templates
+  BatchLogs.php      Sammel-Antwort auswerten (abgeschnittenes JSON, Müll-Filter)
   Db.php             SQLite via PDO
 public/              Web-Root (docroot hierauf setzen, falls möglich)
   index.php          App-Shell + Login-Gate, rendert serverseitig den Auth-Status

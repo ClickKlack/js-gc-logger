@@ -10,6 +10,7 @@ $authed     = Auth::isAuthed();
 $companions = $config['companions'] ?? [];
 $storeLogs  = !empty($config['store_logs']);
 $debug      = !empty($config['debug']);
+$batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
 ?>
 <!doctype html>
 <html lang="de">
@@ -103,9 +104,9 @@ $debug      = !empty($config['debug']);
             <ul id="cache-list" class="cache-list"></ul>
 
             <div class="row">
-                <button id="btn-generate-all" class="primary" type="button">✨ Offene Logs generieren (1 Anfrage)</button>
+                <button id="btn-generate-all" class="primary" type="button">✨ Offene Logs generieren</button>
             </div>
-            <p id="generate-all-status" class="muted">Spart Anfragen: erzeugt alle Caches ohne Log auf einmal. Notizen vorher eintragen ist optional.</p>
+            <p id="generate-all-status" class="muted">Spart Anfragen: erzeugt alle Caches ohne Log in wenigen Sammel-Anfragen. Was nicht klappt, bleibt leer – einfach nochmal klicken. Notizen vorher eintragen ist optional.</p>
 
             <div id="cache-detail" class="detail hidden">
                 <h3 id="cache-title"></h3>
@@ -167,6 +168,7 @@ $debug      = !empty($config['debug']);
     window.GC_COMPANIONS = <?= json_encode(array_values($companions), JSON_UNESCAPED_UNICODE) ?>;
     window.GC_STORE = <?= $storeLogs ? 'true' : 'false' ?>;
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
+    window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
 <script src="assets/app.js?v=7"></script>
 </body>

@@ -168,30 +168,15 @@ try {
                 ['json' => true, 'maxOutputTokens' => $maxTokens]
             );
 
-            // JSON robust parsen (evtl. Code-Fences entfernen).
-            $clean   = trim($raw);
-            $clean   = (string) preg_replace('/^```(?:json)?\s*|\s*```$/i', '', $clean);
-            $decoded = json_decode($clean, true);
-            if (!is_array($decoded)) {
-                dbg_log('generate_all: JSON nicht parsebar: ' . substr($raw, 0, 1000));
-                fail('Die KI-Antwort war kein gültiges JSON. Bei sehr großen Touren ggf. in kleineren Schüben generieren.', 502);
+            // Robust auswerten: auch abgeschnittene Antworten nutzen, Unbrauchbares
+            // verwerfen. Verworfene Caches bleiben leer (nächster Durchlauf füllt sie).
+            ['logs' => $logs, 'rejected' => $rejected] = BatchLogs::evaluate($raw, $caches);
+            if ($rejected !== []) {
+                dbg_log('generate_all: verworfen: ' . json_encode($rejected, JSON_UNESCAPED_UNICODE)
+                    . ' | Rohantwort: ' . substr($raw, 0, 1000));
             }
 
-            // In Map code => log normalisieren (Array von {code, log} ODER {code: log}).
-            $logs = [];
-            foreach ($decoded as $k => $v) {
-                if (is_array($v) && isset($v['code'], $v['log'])) {
-                    $logs[(string) $v['code']] = (string) $v['log'];
-                } elseif (is_string($v)) {
-                    $logs[(string) $k] = $v;
-                }
-            }
-            if ($logs === []) {
-                dbg_log('generate_all: keine Logs in JSON: ' . substr($raw, 0, 1000));
-                fail('Die KI-Antwort enthielt keine verwertbaren Logs.', 502);
-            }
-
-            respond(['ok' => true, 'logs' => $logs, 'count' => count($logs)]);
+            respond(['ok' => true, 'logs' => $logs, 'rejected' => $rejected, 'count' => count($logs)]);
         }
 
         case 'save': {
