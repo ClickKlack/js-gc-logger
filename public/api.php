@@ -136,7 +136,11 @@ try {
             $notes   = (string) ($_POST['notes'] ?? '');
             $companions = json_decode((string) ($_POST['companions'] ?? '[]'), true) ?: [];
             $gemini  = new Gemini((string) $config['gemini_api_key'], (string) $config['gemini_model'], 'dbg_log', $GEMINI_FALLBACK);
-            $log     = $gemini->generate(Prompts::system(), Prompts::log($context, $cache, $notes, $companions));
+            $log     = $gemini->generate(
+                Prompts::system(),
+                Prompts::log($context, $cache, $notes, $companions),
+                ['maxOutputTokens' => Prompts::isForeign($cache) ? 4096 : 2048]
+            );
             respond(['ok' => true, 'log' => $log]);
         }
 
@@ -150,7 +154,12 @@ try {
             }
 
             // Ausgabebudget großzügig an die Cache-Zahl anpassen.
-            $maxTokens = min(32768, 2048 + 1500 * count($caches));
+            // Zweisprachige Logs (Caches außerhalb Deutschlands) brauchen etwa doppelt so viel.
+            $maxTokens = 2048;
+            foreach ($caches as $c) {
+                $maxTokens += Prompts::isForeign($c) ? 3000 : 1500;
+            }
+            $maxTokens = min(32768, $maxTokens);
 
             $gemini = new Gemini((string) $config['gemini_api_key'], (string) $config['gemini_model'], 'dbg_log', $GEMINI_FALLBACK);
             $raw    = $gemini->generate(

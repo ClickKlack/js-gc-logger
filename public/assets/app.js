@@ -240,6 +240,7 @@ function renderMeta(c) {
   if (c.terrain)    parts.push(meta('T', c.terrain));
   if (c.container)  parts.push(meta('Behälter', c.container));
   if (c.placed_by)  parts.push(meta('Owner', c.placed_by));
+  if (c.country)    parts.push(meta('Land', c.country + (c.state ? ' (' + c.state + ')' : '')));
   if (c.code)       parts.push(meta('Code', c.code));
   let html = parts.join('');
   if (c.hint) html += '<div class="hint">Hinweis: ' + escapeHtml(c.hint) + '</div>';

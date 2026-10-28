@@ -10,7 +10,7 @@ final class Prompts
     public static function system(): string
     {
         return <<<TXT
-        Du hilfst beim Schreiben authentischer, persönlicher Geocaching-Logs auf Deutsch.
+        Du hilfst beim Schreiben authentischer, persönlicher Geocaching-Logs auf Deutsch (bzw. zweisprachig, wenn es für einen Cache verlangt wird).
         Schreibe so, wie ein echter Cacher es ins Logbuch auf geocaching.com schreiben würde:
         - Natürlicher, freundlicher Ton; nicht werblich, keine Hashtags, keine Emojis-Flut.
         - Waren Begleiter dabei, schreibe in der Wir-Form, sonst in der Ich-Form.
@@ -72,6 +72,7 @@ final class Prompts
         if (!empty($cache['terrain']))    { $details[] = 'Gelände (T): ' . $cache['terrain']; }
         if (!empty($cache['container']))  { $details[] = 'Behälter: ' . $cache['container']; }
         if (!empty($cache['placed_by']))  { $details[] = 'Owner: ' . $cache['placed_by']; }
+        if (!empty($cache['country']))    { $details[] = 'Ort: ' . self::location($cache); }
         // Hint wird bewusst NICHT an die KI geschickt (sie schrieb ihn sonst ins Log).
         // Er bleibt nur lokal in der Detailansicht sichtbar.
         $detailText = $details !== [] ? implode("\n", $details) : '(keine weiteren Details)';
@@ -105,7 +106,7 @@ final class Prompts
 
         Meine Notizen zum Fund (vollständig einarbeiten):
         $notes
-        TXT;
+        TXT . self::languageRule($cache);
     }
 
     /**
@@ -131,6 +132,7 @@ final class Prompts
             if (!empty($c['terrain']))    { $details[] = 'T: ' . $c['terrain']; }
             if (!empty($c['container']))  { $details[] = 'Behälter: ' . $c['container']; }
             if (!empty($c['placed_by']))  { $details[] = 'Owner: ' . $c['placed_by']; }
+            if (!empty($c['country']))    { $details[] = 'Ort: ' . self::location($c); }
             $detailLine = $details !== [] ? implode(', ', $details) : '(keine weiteren Details)';
 
             $listing = trim((string) ($c['listing'] ?? ''));
@@ -145,7 +147,7 @@ final class Prompts
             $detailLine
             Listing (nur als Inspiration, nicht wörtlich kopieren, keine Spoiler/Lösung/Koordinaten): $listing
             Meine Notizen (vollständig einarbeiten): $notes
-            BLOCK;
+            BLOCK . self::languageRule($c);
         }
         $cacheBlocks = implode("\n\n", $blocks);
 
@@ -163,6 +165,7 @@ final class Prompts
         - Beziehe dich auf die Details und das Listing des jeweiligen Caches; die Länge richtet sich wie gewohnt nach der Länge des Listings.
         - Verarbeite die Notizen des jeweiligen Caches IMMER vollständig: jede Information daraus MUSS im zugehörigen Log vorkommen.
         - Absätze im Logtext als \\n\\n innerhalb des JSON-Strings kodieren.
+        - Steht bei einem Cache eine SPRACHE-Anweisung, gilt sie für dessen Log (beide Sprachteile gehören zusammen in denselben "log"-String).
 
         Gib AUSSCHLIESSLICH ein JSON-Array zurück – ein Objekt pro Cache, exakt in dieser Form:
         [{"code": "<GC-Code des Caches>", "log": "<fertiger Logtext>"}]
@@ -186,5 +189,46 @@ final class Prompts
         return $companions !== []
             ? 'Begleiter (im Log namentlich erwähnen): ' . implode(', ', $companions)
             : 'Begleiter: keine (alleine unterwegs, Ich-Form)';
+    }
+
+    /** Liegt der Cache außerhalb Deutschlands? Ohne Länderangabe: nein. */
+    public static function isForeign(array $cache): bool
+    {
+        $country = mb_strtolower(trim((string) ($cache['country'] ?? '')));
+        return $country !== '' && !in_array($country, ['germany', 'deutschland'], true);
+    }
+
+    /** @param array<string,mixed> $cache */
+    private static function location(array $cache): string
+    {
+        $state = trim((string) ($cache['state'] ?? ''));
+        return trim((string) $cache['country']) . ($state !== '' ? " ($state)" : '');
+    }
+
+    /**
+     * Zusatzanweisung für Caches außerhalb Deutschlands: Log zweisprachig
+     * (Landessprache + Deutsch), jeweils mit Flagge gekennzeichnet.
+     *
+     * @param array<string,mixed> $cache
+     */
+    private static function languageRule(array $cache): string
+    {
+        if (!self::isForeign($cache)) {
+            return '';
+        }
+        $loc = self::location($cache);
+
+        return "\n\n" . <<<TXT
+        SPRACHE: Dieser Cache liegt in $loc, also nicht in Deutschland. Schreibe das Log
+        deshalb in ZWEI Teilen:
+        1. Zuerst das vollständige Log in der Landessprache am Cache-Ort (bei mehrsprachigen
+           Ländern die dort übliche Sprache – Region und Sprache des Listings helfen dabei).
+           Beginne diesen Teil mit dem Flaggen-Emoji des Landes.
+        2. Danach, durch eine Leerzeile getrennt, dasselbe Log auf Deutsch, beginnend mit 🇩🇪.
+        Beide Teile haben denselben Inhalt (inkl. aller Notizen), natürlich formuliert statt
+        wörtlich übersetzt. Keine weiteren Überschriften oder Trennlinien.
+        Ausnahme: Ist die Landessprache am Cache-Ort Deutsch (z. B. Österreich, Liechtenstein,
+        deutschsprachige Schweiz, Südtirol), schreibe nur ein deutsches Log ohne Flagge.
+        TXT;
     }
 }

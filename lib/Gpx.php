@@ -57,6 +57,8 @@ final class Gpx
                 'hint'              => '',
                 'short_description' => '',
                 'listing'           => '',
+                'country'           => '',
+                'state'             => '',
                 'lat'               => (string) $wpt['lat'],
                 'lon'               => (string) $wpt['lon'],
             ];
@@ -82,6 +84,8 @@ final class Gpx
             $entry['container']  = trim((string) $cache->container);
             $entry['difficulty'] = trim((string) $cache->difficulty);
             $entry['terrain']    = trim((string) $cache->terrain);
+            $entry['country']    = trim((string) $cache->country);
+            $entry['state']      = trim((string) $cache->state);
 
             // Hints ggf. aus ROT13 dekodieren (siehe $decodeHints oben)
             $rawHint = trim((string) $cache->encoded_hints);
