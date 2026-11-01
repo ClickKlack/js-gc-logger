@@ -48,6 +48,7 @@ public/              Web-Root (docroot hierauf setzen, falls möglich)
   assets/style.css   Mobile-first Styles
 tests/smoke.php      CLI-Smoketests (php tests/smoke.php), nur auf Temp-Kopie der DB
 tests/auth_probe.php Hilfsprozess für die Login-Tests
+tests/router.php     Router für php -S (ersetzt public/.htaccess: /share/TOKEN/)
 ```
 
 ## Datenbank
@@ -68,6 +69,8 @@ tests/auth_probe.php Hilfsprozess für die Login-Tests
   tauchen dort nicht automatisch auf (KI-Log, Notizen, Kontext bleiben privat).
 - Gast darf nur `companion.template` des Link-Empfängers schreiben (`changed_by =
   'share'`), nie die Standardvorlage. Links: Token im Klartext, 14 Tage, Lazy Purge.
+- Link-Form `…/share/TOKEN/`: Apache über `public/.htaccess`, lokal über
+  `tests/router.php`. Assets in `share.php` deshalb mit Basispfad, nie relativ.
 
 ## Field-Notes-Export
 
@@ -81,7 +84,7 @@ tests/auth_probe.php Hilfsprozess für die Login-Tests
 ```sh
 cp config.example.php config.php          # dann Key + Passwort-Hash eintragen
 php -r "echo password_hash('GEHEIM', PASSWORD_DEFAULT), PHP_EOL;"   # Hash erzeugen
-php -S localhost:8000 -t public           # http://localhost:8000 öffnen
+php -S localhost:8000 -t public tests/router.php   # http://localhost:8000 (Router: /share/TOKEN/)
 php tests/smoke.php                       # Smoketests (DB-Kopie, spec/-Testdateien)
 ```
 

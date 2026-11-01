@@ -1,0 +1,6 @@
+# Docroot = public/ (Apache). Hübsche Freigabe-Links: /share/TOKEN/ → share.php?t=TOKEN
+# Lokal mit php -S übernimmt das tests/router.php.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^share/([A-Za-z0-9_-]+)/?$ share.php?t=$1 [L,QSA]
+</IfModule>

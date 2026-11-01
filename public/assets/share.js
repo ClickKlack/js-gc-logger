@@ -3,8 +3,9 @@
 /* Gastseite für Freigabe-Links (spec-v3) — Begleiter wählt Caches, passt die Vorlage
    an und lädt die Field-Notes-Datei herunter. Nutzt common.js (api, typeIcon, …). */
 
-API.url = 'share.php';
-API.extra = { t: new URLSearchParams(location.search).get('t') || '' };
+// Seite liegt unter …/share/TOKEN/ – Basispfad und Token liefert share.php
+API.url = document.body.dataset.base + '/share.php';
+API.extra = { t: document.body.dataset.token || '' };
 
 const TEMPLATE_SOURCES = {
   companion: 'deine Vorlage', default: 'Standardvorlage', builtin: 'Standardvorlage', edited: 'nur für diesen Download geändert',

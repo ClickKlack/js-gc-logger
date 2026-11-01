@@ -159,7 +159,7 @@ function share_url(array $config, string $token): string
         $dir   = rtrim(str_replace('\\', '/', dirname((string) ($_SERVER['SCRIPT_NAME'] ?? '/api.php'))), '/');
         $base  = ($https ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $dir;
     }
-    return $base . '/share.php?t=' . rawurlencode($token);
+    return $base . '/share/' . rawurlencode($token) . '/';   // public/.htaccess → share.php
 }
 
 /** Freigabe für das Frontend: ohne Token-Spalte, mit fertigem Link. */
