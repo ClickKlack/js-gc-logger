@@ -14,40 +14,6 @@ const state = {
   pendingFieldnotes: null,  // vor dem GPX-Upload gewählte Feldnotizen-Datei
 };
 
-/* ---------- kleine Helfer ---------- */
-
-const $ = (sel) => document.querySelector(sel);
-
-function show(el)  { el.classList.remove('hidden'); }
-function hide(el)  { el.classList.add('hidden'); }
-
-async function api(action, data = {}, isForm = false) {
-  let body;
-  if (isForm) {
-    body = data;                  // FormData (z. B. Datei-Upload)
-    body.append('action', action);
-  } else {
-    body = new FormData();
-    body.append('action', action);
-    for (const [k, v] of Object.entries(data)) body.append(k, v);
-  }
-  const res = await fetch('api.php', { method: 'POST', body });
-  const raw = await res.text();
-  let json;
-  try {
-    json = JSON.parse(raw);
-  } catch {
-    const snippet = raw.trim().slice(0, 200) || '(leere Antwort)';
-    throw new Error('Server-Antwort war kein JSON (HTTP ' + res.status + '): ' + snippet);
-  }
-  if (!json.ok) {
-    const err = new Error(json.error || 'Unbekannter Fehler.');
-    err.status = res.status;
-    throw err;
-  }
-  return json;
-}
-
 /* ---------- Autosave: lokal sofort, Server verzögert ---------- */
 
 // Jede Änderung landet sofort als "Edit" im localStorage-Entwurf der Tour
@@ -677,13 +643,6 @@ function dupSummary() {
   return parts.join(' · ');
 }
 
-function statusBadge(type) {
-  const t = type || 'Found it';
-  const cls = t === "Didn't find it" ? 's-dnf'
-    : (['Found it', 'Attended', 'Webcam Photo Taken'].includes(t) ? 's-found' : 's-other');
-  return '<span class="status ' + cls + '">' + escapeHtml(LOG_TYPE_LABELS[t] || t) + '</span>';
-}
-
 function moveCache(i, delta) {
   const j = i + delta;
   if (j < 0 || j >= state.caches.length) return;
@@ -725,58 +684,6 @@ function selectCache(i) {
 }
 
 /* ---------- Log-Status, Datum, Uhrzeit ---------- */
-
-/* Cache-Typ-Symbole: eigene SVGs im Stil von geocaching.com (Farbe + Form),
-   damit sie offline funktionieren. Reihenfolge der Muster ist wichtig (z. B. Mega vor Event). */
-const TYPE_ICONS = [
-  [/mega/i, '#a4235b', 'evt', 'Mega-Event'],
-  [/giga/i, '#6b2a8a', 'evt', 'Giga-Event'],
-  [/cito|trash/i, '#3e8e41', 'cito', 'CITO-Event'],
-  [/community celebration/i, '#d9822b', 'evt', 'Community-Celebration-Event'],
-  [/event/i, '#c8312f', 'evt', 'Event'],
-  [/tradi/i, '#02874d', 'box', 'Traditional'],
-  [/multi/i, '#e5a00d', 'multi', 'Multi'],
-  [/unknown|mystery/i, '#1f5aa6', 'q', 'Mystery'],
-  [/letterbox/i, '#25407a', 'mail', 'Letterbox'],
-  [/earth/i, '#1d7a87', 'globe', 'Earthcache'],
-  [/virtual/i, '#3b8fd4', 'virt', 'Virtual'],
-  [/webcam/i, '#5e6670', 'cam', 'Webcam'],
-  [/wherigo/i, '#2b6cb0', 'w', 'Wherigo'],
-  [/lab/i, '#00a0a0', 'flask', 'Adventure Lab'],
-];
-const ICON_GLYPHS = {
-  box: '<rect x="5" y="8" width="10" height="7" rx="1" fill="#fff"/><rect x="4.5" y="6" width="11" height="3" rx="1" fill="#fff"/>',
-  multi: '<rect x="3.5" y="9" width="7" height="6" rx="1" fill="#fff"/><rect x="9.5" y="5" width="7" height="6" rx="1" fill="#fff" opacity=".85"/>',
-  q: '<path d="M7.3 7.6a2.7 2.7 0 1 1 3.9 2.4c-.8.4-1.2 1-1.2 1.8v.6" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="10" cy="15.2" r="1.2" fill="#fff"/>',
-  mail: '<rect x="4" y="6" width="12" height="9" rx="1" fill="#fff"/><path d="M4.5 6.5 10 11l5.5-4.5" stroke="#25407a" stroke-width="1.4" fill="none"/>',
-  evt: '<rect x="4" y="5.5" width="12" height="10" rx="1.2" fill="#fff"/><rect x="4" y="5.5" width="12" height="3" fill="#fff" opacity=".7"/><circle cx="7.5" cy="11.5" r="1.2" fill="currentColor"/><circle cx="12.5" cy="11.5" r="1.2" fill="currentColor"/>',
-  cito: '<path d="M6 7h8l-1 9H7z" fill="#fff"/><rect x="5" y="5" width="10" height="1.8" rx=".6" fill="#fff"/>',
-  globe: '<circle cx="10" cy="10" r="5.5" fill="none" stroke="#fff" stroke-width="1.5"/><path d="M4.5 10h11M10 4.5c-2.5 3-2.5 8 0 11M10 4.5c2.5 3 2.5 8 0 11" stroke="#fff" stroke-width="1.1" fill="none"/>',
-  virt: '<rect x="5" y="6" width="10" height="9" rx="1" fill="none" stroke="#fff" stroke-width="1.5" stroke-dasharray="2 1.6"/>',
-  cam: '<rect x="4" y="7" width="12" height="8" rx="1.5" fill="#fff"/><circle cx="10" cy="11" r="2.4" fill="#5e6670"/><rect x="7" y="5.5" width="4" height="2" rx=".5" fill="#fff"/>',
-  w: '<path d="M4.5 6.5l1.8 7.5 3.7-5.5 3.7 5.5 1.8-7.5" stroke="#fff" stroke-width="1.8" fill="none" stroke-linejoin="round" stroke-linecap="round"/>',
-  flask: '<path d="M8.5 5h3v3.5l3.5 6.5H5l3.5-6.5z" fill="#fff"/>',
-  other: '<circle cx="10" cy="10" r="3" fill="#fff"/>',
-};
-function typeIcon(type) {
-  const t = type || '';
-  const hit = TYPE_ICONS.find(([re]) => re.test(t)) || [null, '#8a929c', 'other', t || 'Cache'];
-  const [, color, glyph] = hit;
-  const label = t || hit[3];
-  // Tooltip/Screenreader-Text am Wrapper: kein Text im Namen (textContent, Kopieren)
-  return '<span class="type-icon" role="img" aria-label="' + escapeHtml(label) + '" title="' + escapeHtml(label) + '">'
-    + '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" style="color:' + color + '">'
-    + '<rect x="0.5" y="0.5" width="19" height="19" rx="4.5" fill="' + color + '"/>' + ICON_GLYPHS[glyph] + '</svg></span>';
-}
-
-const LOG_TYPE_LABELS = {
-  'Found it': 'Fund',
-  "Didn't find it": 'DNF',
-  'Write note': 'Notiz',
-  'Attended': 'Teilgenommen',
-  'Will Attend': 'Werde teilnehmen',
-  'Webcam Photo Taken': 'Webcam-Foto',
-};
 
 // Event-/Webcam-Typen nur bei passenden Caches (dort gibt es kein „Found it")
 function logTypeOptions(c) {
@@ -981,8 +888,10 @@ function showToursView() {
   flushEdits();
   TOUR_SECTIONS.forEach((sel) => hide($(sel)));
   show($('#view-tours'));
+  show($('#view-share'));
   show($('#view-backup'));
   tourPage = 1;
+  loadShares();
   window.scrollTo(0, 0);
   fetchAndRenderTours($('#tour-list'), $('#load-status'));
 }
@@ -1075,11 +984,16 @@ $('#btn-filter-reset')?.addEventListener('click', () => {
 });
 
 // Feste Begleiter (config) vorn, übrige alphabetisch – als zwei Gruppen
-function fillCompanionFilter({ fixed = [], others = [] }) {
-  const sel = $('#f-companion');
+function fillCompanionFilter(companions) {
+  fillCompanionSelect($('#f-companion'), '– alle –', companions);
+  const rec = $('#share-recipient');
+  if (rec) fillCompanionSelect(rec, '– Begleiter wählen –', companions);
+}
+
+function fillCompanionSelect(sel, emptyLabel, { fixed = [], others = [] }) {
   const cur = sel.value;
   const opts = (names) => names.map((n) => '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>').join('');
-  sel.innerHTML = '<option value="">– alle –</option>'
+  sel.innerHTML = '<option value="">' + escapeHtml(emptyLabel) + '</option>'
     + (fixed.length ? '<optgroup label="Feste Begleiter">' + opts(fixed) + '</optgroup>' : '')
     + (others.length ? '<optgroup label="Weitere">' + opts(others) + '</optgroup>' : '');
   sel.value = [...fixed, ...others].includes(cur) ? cur : '';
@@ -1188,7 +1102,7 @@ async function openTour(id, opts = {}) {
     setTourDateUI(state.tourDate);
     $('#context-text').value = state.context;
 
-    ['#view-tours', '#view-backup'].forEach((sel) => { const el = $(sel); if (el) hide(el); });
+    ['#view-tours', '#view-share', '#view-backup'].forEach((sel) => { const el = $(sel); if (el) hide(el); });
     if (state.context.trim()) {
       // Kontext steht schon: direkt zu den Caches
       placeTourFields(true);
@@ -1223,7 +1137,6 @@ async function openTour(id, opts = {}) {
 }
 
 $('#btn-new')?.addEventListener('click', startNewTour);
-
 
 /* ---------- Field-Notes-Export (Draft-Datei für geocaching.com) ---------- */
 
@@ -1288,6 +1201,12 @@ function renderTemplateArea(res, fillText) {
   $('#template-source').textContent = TEMPLATE_SOURCES[res.template_source] || '';
   $('#export-mitcacher').textContent = '{mitcacher} = ' + (res.mitcacher || '(niemand)');
   $('#btn-tpl-save-companion').textContent = 'Als Vorlage für ' + res.recipient + ' speichern';
+  $('#btn-export-share').classList.toggle('hidden', !window.GC_STORE);
+  // Hinweis, wenn der Begleiter seine Vorlage zuletzt selbst über seinen Link gespeichert hat
+  const changed = $('#template-changed');
+  const bySharer = res.template_source === 'companion' && res.template_changed_by === 'share' && res.template_changed_at;
+  changed.textContent = bySharer ? '✏️ Geändert von ' + res.recipient + ' über Link am ' + formatUtcLocal(res.template_changed_at) : '';
+  changed.classList.toggle('hidden', !bySharer);
   const unk = $('#template-unknown');
   unk.textContent = res.unknown.length ? '⚠ Unbekannte Platzhalter: ' + res.unknown.map((u) => '{' + u + '}').join(' ') + ' – Tippfehler?' : '';
   unk.classList.toggle('hidden', !res.unknown.length);
@@ -1319,12 +1238,176 @@ async function saveTemplate(name, label) {
     await api('save_template', { name, template: $('#export-template').value });
     $('#template-status').textContent = '✓ ' + label + ' gespeichert.';
     $('#template-source').textContent = name ? TEMPLATE_SOURCES.companion : TEMPLATE_SOURCES.default;
+    if (name) hide($('#template-changed'));
   } catch (ex) {
     $('#template-status').textContent = 'Fehler: ' + ex.message;
   }
 }
 $('#btn-tpl-save-companion')?.addEventListener('click', () => saveTemplate(exportRecipient, 'Vorlage für ' + exportRecipient));
 $('#btn-tpl-save-default')?.addEventListener('click', () => saveTemplate('', 'Standardvorlage'));
+$('#btn-export-share')?.addEventListener('click', () => {
+  const recipient = exportRecipient;
+  const tourId = state.tourId;
+  showToursView();
+  openShareNew(recipient, tourId);
+});
+
+/* ---------- Freigabe-Links für Begleiter (spec-v3) ---------- */
+
+let shareTours = [];   // Touren des gewählten Empfängers: { id, title, tour_date, date_min, date_max, cache_count }
+const shareChecked = new Set();
+
+async function loadShares(highlightId) {
+  const ul = $('#share-list');
+  if (!ul) return;
+  try {
+    const { shares } = await api('share_list');
+    ul.innerHTML = shares.length ? '' : '<li class="muted">Keine aktiven Links.</li>';
+    shares.forEach((s) => ul.appendChild(shareItem(s, s.id === highlightId)));
+    $('#share-status').textContent = '';
+  } catch (ex) {
+    $('#share-status').textContent = 'Fehler: ' + ex.message;
+  }
+}
+
+function shareItem(s, isNew) {
+  const li = document.createElement('li');
+  li.className = 'share-item' + (isNew ? ' new' : '');
+  const tours = s.tours.map((t) => '#' + t.id + ' ' + escapeHtml(t.title || 'Tour') + ' (' + escapeHtml(formatDate(t.tour_date)) + ')').join(', ');
+  const meta = [
+    'gültig bis ' + escapeHtml(formatUtcLocal(s.expires_at)),
+    s.last_used_at ? 'zuletzt geöffnet ' + escapeHtml(formatUtcLocal(s.last_used_at)) : 'noch nicht geöffnet',
+    s.downloads + ' Download' + (s.downloads === 1 ? '' : 's'),
+    s.exported + ' Cache' + (s.exported === 1 ? '' : 's') + ' exportiert',
+  ];
+  li.innerHTML = '<span class="x-main"><b>👤 ' + escapeHtml(s.recipient) + '</b>' + (isNew ? ' <span class="badge">neu</span>' : '')
+    + '<span class="x-sub">' + tours + '</span>'
+    + '<span class="x-sub">' + meta.map((m) => '<span class="part">' + m + '</span>').join(' · ') + '</span>'
+    + '<input type="text" class="share-url" readonly aria-label="Link für ' + escapeHtml(s.recipient) + '" value="' + escapeHtml(s.url) + '">'
+    + '<span class="row">'
+    + '<button type="button" class="ghost btn-copy">📋 Kopieren</button>'
+    + (navigator.share ? '<button type="button" class="ghost btn-share">📤 Teilen</button>' : '')
+    + '<button type="button" class="ghost btn-revoke">🗑 Widerrufen</button>'
+    + '</span><span class="x-sub share-msg" aria-live="polite"></span></span>';
+  const msg = li.querySelector('.share-msg');
+  const input = li.querySelector('.share-url');
+  input.addEventListener('focus', () => input.select());
+  li.querySelector('.btn-copy').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(s.url);
+    } catch {
+      input.select();
+      document.execCommand('copy');
+    }
+    msg.textContent = '✓ Link kopiert.';
+  });
+  li.querySelector('.btn-share')?.addEventListener('click', () => {
+    navigator.share({ title: 'Field Notes', text: 'Hallo ' + s.recipient + ', hier deine Field Notes zum Hochladen bei geocaching.com:', url: s.url })
+      .catch(() => {});   // Abbruch durch Nutzer
+  });
+  li.querySelector('.btn-revoke').addEventListener('click', async () => {
+    if (!confirm('Link für ' + s.recipient + ' widerrufen? Er funktioniert danach nicht mehr.')) return;
+    try {
+      await api('share_delete', { id: String(s.id) });
+      loadShares();
+    } catch (ex) {
+      msg.textContent = 'Fehler: ' + ex.message;
+    }
+  });
+  return li;
+}
+
+// Alle Touren mit diesem Begleiter (über alle Seiten der Tourliste)
+async function loadShareTours(recipient) {
+  const ul = $('#share-tours');
+  const status = $('#share-tours-status');
+  shareTours = [];
+  ul.innerHTML = '';
+  renderShareCreate();
+  if (!recipient) { status.textContent = ''; return; }
+  status.textContent = 'Lade Touren …';
+  try {
+    for (let page = 1, pages = 1; page <= pages; page++) {
+      const res = await api('list_tours', { companion: recipient, page: String(page) });
+      shareTours.push(...res.tours);
+      pages = res.pages;
+    }
+    status.textContent = shareTours.length ? 'Touren mit ' + recipient + ':' : 'Keine Touren mit ' + recipient + '.';
+    renderShareTours();
+  } catch (ex) {
+    status.textContent = 'Fehler: ' + ex.message;
+  }
+}
+
+function renderShareTours() {
+  const ul = $('#share-tours');
+  ul.innerHTML = '';
+  shareTours.forEach((t) => {
+    const li = document.createElement('li');
+    li.className = 'export-item clickable';
+    li.innerHTML = '<input type="checkbox"' + (shareChecked.has(t.id) ? ' checked' : '') + ' aria-label="Tour ' + t.id + ' freigeben">'
+      + '<span class="x-main"><b>#' + t.id + '</b> ' + escapeHtml(t.title || 'Tour')
+      + '<span class="x-sub"><span class="part">' + escapeHtml(formatRange(t.date_min || t.tour_date, t.date_max || t.tour_date)) + '</span>'
+      + ' · <span class="part">' + t.cache_count + ' Caches</span></span></span>';
+    const cb = li.querySelector('input');
+    cb.addEventListener('change', () => {
+      if (cb.checked) shareChecked.add(t.id); else shareChecked.delete(t.id);
+      renderShareCreate();
+    });
+    // ganze Karte anklickbar, nicht nur die Checkbox
+    li.addEventListener('click', (e) => {
+      if (e.target === cb) return;
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event('change'));
+    });
+    ul.appendChild(li);
+  });
+  renderShareCreate();
+}
+
+function renderShareCreate() {
+  const n = shareTours.filter((t) => shareChecked.has(t.id)).length;
+  const btn = $('#btn-share-create');
+  btn.disabled = n === 0;
+  btn.textContent = '🔗 Link erzeugen' + (n ? ' (' + n + ' Tour' + (n === 1 ? '' : 'en') + ')' : '');
+}
+
+// Aus dem Export-Dialog: Empfänger + aktuelle Tour vorbelegen
+async function openShareNew(recipient, tourId) {
+  const det = $('#share-new');
+  det.open = true;
+  shareChecked.clear();
+  if (tourId) shareChecked.add(tourId);
+  const sel = $('#share-recipient');
+  if (![...sel.options].some((o) => o.value === recipient)) sel.add(new Option(recipient, recipient));
+  sel.value = recipient;
+  await loadShareTours(recipient);
+  $('#view-share').scrollIntoView();
+}
+
+$('#share-recipient')?.addEventListener('change', (e) => {
+  shareChecked.clear();
+  $('#share-create-status').textContent = '';
+  loadShareTours(e.target.value);
+});
+
+$('#btn-share-create')?.addEventListener('click', async () => {
+  const recipient = $('#share-recipient').value;
+  const ids = shareTours.filter((t) => shareChecked.has(t.id)).map((t) => t.id);
+  const status = $('#share-create-status');
+  status.textContent = 'Erzeuge Link …';
+  try {
+    const { share } = await api('share_create', { recipient, tour_ids: JSON.stringify(ids) });
+    status.textContent = '✓ Link für ' + recipient + ' erzeugt – unten kopieren oder teilen.';
+    shareChecked.clear();
+    renderShareTours();
+    $('#share-new').open = false;
+    await loadShares(share.id);
+    $('#share-list .share-item.new')?.scrollIntoView({ block: 'nearest' });
+  } catch (ex) {
+    status.textContent = 'Fehler: ' + ex.message;
+  }
+});
 
 function renderExport() {
   const ul = $('#export-list');
@@ -1385,31 +1468,6 @@ $('#btn-export-download')?.addEventListener('click', async () => {
 
 /* ---------- Downloads (Field Notes, Backup) ---------- */
 
-// POST an die API, Antwort als Datei speichern. Fehler kommen als JSON zurück.
-// Gibt den Dateinamen (vom Server) zurück.
-async function downloadPost(action, data, fallbackName) {
-  const body = new FormData();
-  body.append('action', action);
-  for (const [k, v] of Object.entries(data)) body.append(k, v);
-  const res = await fetch('api.php', { method: 'POST', body });
-  // Datei nur bei „attachment"; sonst ist es eine JSON-Fehlerantwort
-  const disp = res.headers.get('Content-Disposition') || '';
-  if (!res.ok || !disp.includes('attachment')) {
-    const j = await res.json().catch(() => ({}));
-    throw new Error(j.error || 'HTTP ' + res.status);
-  }
-  const blob = await res.blob();
-  const name = (/filename="([^"]+)"/.exec(disp) || [])[1] || fallbackName;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-  return name;
-}
-
 // JSON und GPX folgen den aktiven Filtern; SQLite ist immer komplett
 async function backup(action, fallbackName, filtered) {
   const status = $('#backup-status');
@@ -1458,17 +1516,6 @@ if (window.GC_DEBUG) {
 
 /* ---------- Utility ---------- */
 
-const TZ = 'Europe/Berlin';
-
-// UTC-Zeitpunkt → { date: 'YYYY-MM-DD', time: 'HH:MM' } in Ortszeit
-function berlinParts(iso) {
-  const p = {};
-  new Intl.DateTimeFormat('en-CA', {
-    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(new Date(iso)).forEach(({ type, value }) => { p[type] = value; });
-  return { date: p.year + '-' + p.month + '-' + p.day, time: p.hour + ':' + p.minute };
-}
-
 // Ortszeit (Datum + 'HH:MM') → UTC-ISO 'YYYY-MM-DDTHH:MM:SSZ' (Sommer-/Winterzeit beachtet)
 function berlinToUtcIso(date, time) {
   const [y, mo, d] = date.split('-').map(Number);
@@ -1509,18 +1556,6 @@ function formatLocalDateTime(iso) {
   return d.toLocaleString('de-DE', {
     timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   }).replace(',', '');
-}
-
-// 'YYYY-MM-DD' → 'TT.MM.JJJJ'
-function formatDate(d) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || '');
-  return m ? m[3] + '.' + m[2] + '.' + m[1] : (d || '');
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /* ---------- Start (am Ende: alle Konstanten sind definiert) ---------- */

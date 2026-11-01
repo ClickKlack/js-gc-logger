@@ -142,9 +142,32 @@ function export_candidates(Db $db, array $tour, array $config): array
         'recipient'       => $recipient,
         'template'        => $tpl['template'],
         'template_source' => $tpl['source'],
+        'template_changed_at' => $tpl['changed_at'] ?? null,   // Hinweis „geändert über Link"
+        'template_changed_by' => $tpl['changed_by'] ?? null,
         'unknown'         => FieldNotesExport::unknownPlaceholders($tpl['template']),
         'mitcacher'       => FieldNotesExport::mitcacher((array) $tour['companions'], $me, $recipient),
     ];
+}
+
+/** Öffentlicher Link zur Gastseite (base_url aus config.php, sonst aus dem Request). */
+function share_url(array $config, string $token): string
+{
+    $base = rtrim(trim((string) ($config['base_url'] ?? '')), '/');
+    if ($base === '') {
+        $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https';
+        $dir   = rtrim(str_replace('\\', '/', dirname((string) ($_SERVER['SCRIPT_NAME'] ?? '/api.php'))), '/');
+        $base  = ($https ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $dir;
+    }
+    return $base . '/share.php?t=' . rawurlencode($token);
+}
+
+/** Freigabe für das Frontend: ohne Token-Spalte, mit fertigem Link. */
+function share_out(array $config, array $share): array
+{
+    $share['url'] = share_url($config, (string) $share['token']);
+    unset($share['token']);
+    return $share;
 }
 
 /** Tour-IDs passend zu den Filtern im Request (wie list_tours); null = kein Filter aktiv. */
@@ -340,6 +363,30 @@ try {
             // name = '' → Standardvorlage, sonst Vorlage für diesen Begleiter
             $db = storage_db($config);
             $db->saveTemplate(trim((string) ($_POST['name'] ?? '')), (string) ($_POST['template'] ?? ''));
+            respond(['ok' => true]);
+        }
+
+        case 'share_create': {
+            // Freigabe-Link (spec-v3): recipient + tour_ids (JSON-Array)
+            $db = storage_db($config);
+            try {
+                $share = $db->createShare((string) ($_POST['recipient'] ?? ''), array_map('intval', post_json('tour_ids')));
+            } catch (InvalidArgumentException $e) {
+                fail($e->getMessage());
+            }
+            respond(['ok' => true, 'share' => share_out($config, $share)]);
+        }
+
+        case 'share_list': {
+            $db = storage_db($config);
+            respond(['ok' => true, 'shares' => array_map(static fn (array $s): array => share_out($config, $s), $db->listShares())]);
+        }
+
+        case 'share_delete': {
+            $db = storage_db($config);
+            if (!$db->deleteShare((int) ($_POST['id'] ?? 0))) {
+                fail('Freigabe nicht gefunden.', 404);
+            }
             respond(['ok' => true]);
         }
 

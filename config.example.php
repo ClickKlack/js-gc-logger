@@ -49,4 +49,8 @@ return [
     // Eigener geocaching.com-Name: erkennt das eigene Log in der GPX und ist
     // Teil von {mitcacher} beim Field-Notes-Export für Begleiter.
     'gc_username' => 'ClickKlack',
+
+    // Optional: öffentliche Basis-URL für Freigabe-Links an Begleiter, z. B.
+    // 'https://gc.example.de' (ohne /share.php). Leer = aus dem Aufruf ableiten.
+    'base_url' => '',
 ];

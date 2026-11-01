@@ -19,7 +19,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=27">
+    <link rel="stylesheet" href="assets/style.css?v=31">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -88,6 +88,26 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
                 <span id="page-info" class="muted"></span>
                 <button id="btn-page-next" class="ghost" type="button" aria-label="Nächste Seite">Weiter ›</button>
             </div>
+        </section>
+
+        <!-- Freigabe-Links (spec-v3): sichtbar zusammen mit „Meine Touren" -->
+        <section id="view-share" class="card hidden">
+            <h2>🔗 Freigabe-Links für Begleiter</h2>
+            <p class="muted">Ein Begleiter lädt über den Link ohne Login seine Field Notes für die gewählten Touren herunter. Gültig 14 Tage.</p>
+            <details id="share-new" class="filter">
+                <summary>＋ Neuen Link erzeugen</summary>
+                <label>Empfänger
+                    <select id="share-recipient"><option value="">– Begleiter wählen –</option></select>
+                </label>
+                <p id="share-tours-status" class="muted"></p>
+                <ul id="share-tours" class="export-list"></ul>
+                <div class="row">
+                    <button id="btn-share-create" class="primary" type="button" disabled>🔗 Link erzeugen</button>
+                </div>
+                <p id="share-create-status" class="muted"></p>
+            </details>
+            <ul id="share-list" class="export-list"></ul>
+            <p id="share-status" class="muted"></p>
         </section>
 
         <!-- Backup: eigene Karte, sichtbar zusammen mit „Meine Touren" -->
@@ -256,11 +276,13 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
                         <button type="button" class="ph-chip" data-ph="{gc_code}">{gc_code}</button>
                     </span>
                 </p>
+                <p id="template-changed" class="dup-box info hidden"></p>
                 <p id="export-mitcacher" class="muted"></p>
                 <p id="template-unknown" class="field-hint hidden"></p>
                 <div class="row">
                     <button id="btn-tpl-save-companion" class="ghost" type="button">Als Vorlage für … speichern</button>
                     <button id="btn-tpl-save-default" class="ghost" type="button">Als Standardvorlage speichern</button>
+                    <button id="btn-export-share" class="ghost" type="button">🔗 Als Link freigeben</button>
                 </div>
                 <p id="template-status" class="muted"></p>
             </div>
@@ -299,6 +321,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=37"></script>
+<script src="assets/common.js?v=1"></script>
+<script src="assets/app.js?v=40"></script>
 </body>
 </html>

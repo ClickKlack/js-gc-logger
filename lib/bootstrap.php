@@ -20,6 +20,7 @@ require __DIR__ . '/Auth.php';
 require __DIR__ . '/Gpx.php';
 require __DIR__ . '/FieldNotes.php';
 require __DIR__ . '/FieldNotesExport.php';
+require __DIR__ . '/Share.php';
 require __DIR__ . '/GpxExport.php';
 require __DIR__ . '/Gemini.php';
 require __DIR__ . '/Prompts.php';
