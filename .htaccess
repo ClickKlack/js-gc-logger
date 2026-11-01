@@ -17,5 +17,5 @@
 </FilesMatch>
 
 # Backend-Verzeichnisse / sensible Dateien (Apache 2.4)
-RedirectMatch 403 ^/?(lib|data)/
+RedirectMatch 403 ^/?(lib|data|tests)/
 RedirectMatch 403 ^/?schema\.sql$

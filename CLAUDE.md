@@ -39,7 +39,16 @@ public/              Web-Root (docroot hierauf setzen, falls möglich)
   api.php            JSON-Router (POST-Actions)
   assets/app.js      Frontend-Logik (State-Maschine)
   assets/style.css   Mobile-first Styles
+tests/smoke.php      CLI-Smoketests (php tests/smoke.php), nur auf Temp-Kopie der DB
 ```
+
+## Datenbank
+
+- Schema-Änderungen: neue Spalten in `schema.sql` (für Neuinstallationen) **und** als
+  neue Migration in `Db::migrations()` anhängen (nie bestehende ändern). Version steht in
+  `PRAGMA user_version`; vor jeder Migration einer bestehenden DB wird automatisch
+  gesichert (`data/backup/`, letzte 3, `VACUUM INTO`).
+- WAL-Modus ist aktiv (`*.sqlite-wal`/`-shm` neben der DB sind normal).
 
 ## Lokal testen
 
@@ -47,6 +56,7 @@ public/              Web-Root (docroot hierauf setzen, falls möglich)
 cp config.example.php config.php          # dann Key + Passwort-Hash eintragen
 php -r "echo password_hash('GEHEIM', PASSWORD_DEFAULT), PHP_EOL;"   # Hash erzeugen
 php -S localhost:8000 -t public           # http://localhost:8000 öffnen
+php tests/smoke.php                       # Smoketests (DB-Kopie, spec/-Testdateien)
 ```
 
 Beispiel-GPX aus einer Pocket Query oder „Cache → Mit GPX herunterladen" verwenden.
