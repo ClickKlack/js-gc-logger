@@ -331,7 +331,9 @@ $('#gpx-file')?.addEventListener('change', async (e) => {
       renderCacheList();
       renderSaveIndicator();
       $('#btn-context').disabled = false;
-      status.textContent = '✓ Tour #' + tour.id + ' angelegt (' + tour.caches.length + ' Caches) – wird automatisch gespeichert.';
+      status.textContent = '✓ Tour #' + tour.id + ' angelegt (' + tour.caches.length + ' Caches) – wird automatisch gespeichert.'
+        + (dupSummary() ? ' ' + dupSummary() : '');
+      setDupBanner(dupSummary());
     } else {
       status.textContent = '';
       await openTour(tour.id, { tour });
@@ -422,6 +424,18 @@ function refreshTour(tour) {
   state.current = cur ? state.caches.findIndex((c) => c.id === cur.id) : -1;
   if (state.current >= 0) selectCache(state.current);
   else renderCacheList();
+}
+
+// Duplikat-Hinweis oben in der Caches-Karte
+function setDupBanner(text) {
+  const el = $('#dup-banner');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('hidden', !text);
+  // Farbe des schwersten Falls: rot bei möglichem Doppelfund, sonst blau
+  const warn = state.caches.some((c) => dupLevel(c) === 'warn');
+  el.classList.toggle('warn', warn);
+  el.classList.toggle('info', !warn);
 }
 
 /* ---------- Begleiter einsammeln ---------- */
@@ -585,7 +599,8 @@ function renderCacheList() {
   ul.innerHTML = '';
   state.caches.forEach((c, i) => {
     const li = document.createElement('li');
-    li.className = 'cache-item' + (i === state.current ? ' active' : '') + (c.done ? ' done' : '');
+    li.className = 'cache-item' + (i === state.current ? ' active' : '') + (c.done ? ' done' : '')
+      + (dupLevel(c) ? ' dup-' + dupLevel(c) : '');
     const last = state.caches.length - 1;
     li.innerHTML =
       '<button type="button" class="check" aria-label="' + (c.done ? 'als offen markieren' : 'als erledigt markieren')
@@ -630,7 +645,33 @@ function cacheSubline(c) {
   if (cc) parts.push('<span class="cc" title="' + escapeHtml(c.country) + '">' + escapeHtml(cc) + '</span>');
   parts.push(statusBadge(c.log_type));
   if (state.fieldnotesAt && !c.fieldnote_ts) parts.push('<span class="no-note">⚠ keine Feldnotiz</span>');
+  const dl = dupLevel(c);
+  if (dl === 'warn') parts.push('<span class="dup-label warn">⚠ doppelt</span>');
+  else if (dl === 'info') parts.push('<span class="dup-label info">ℹ schon besucht</span>');
   return parts.map((p) => '<span class="part">' + p + '</span>').join(' · ');
+}
+
+// Schwerste Duplikat-Stufe eines Caches: 'warn' | 'info' | ''
+function dupLevel(c) {
+  const d = c.duplicates || [];
+  return d.some((x) => x.level === 'warn') ? 'warn' : (d.length ? 'info' : '');
+}
+
+// Wie der Server: rot nur, wenn beide Einträge als Fund zählen (oder Code doppelt in der Tour)
+const FOUND_TYPES = ['Found it', 'Attended', 'Webcam Photo Taken'];
+function updateDupLevels(c) {
+  (c.duplicates || []).forEach((d) => {
+    d.level = d.same_tour || (FOUND_TYPES.includes(d.log_type) && FOUND_TYPES.includes(c.log_type)) ? 'warn' : 'info';
+  });
+}
+
+function dupSummary() {
+  const warn = state.caches.filter((c) => dupLevel(c) === 'warn').length;
+  const info = state.caches.filter((c) => dupLevel(c) === 'info').length;
+  const parts = [];
+  if (warn) parts.push('⚠ ' + warn + ' möglicher Doppelfund / doppelter Code');
+  if (info) parts.push('ℹ ' + info + ' Cache(s) auch in anderer Tour (DNF/Notiz)');
+  return parts.join(' · ');
 }
 
 function statusBadge(type) {
@@ -758,12 +799,20 @@ function markManual(c, field) {
   c.manual_fields = [...new Set([...(c.manual_fields || []), field])];
 }
 
+$('#cache-meta')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.open-tour');
+  if (btn) openTour(Number(btn.dataset.tour));
+});
+
 $('#cache-status')?.addEventListener('change', (e) => {
   const c = state.caches[state.current];
   if (!c) return;
   c.log_type = e.target.value;
   markManual(c, 'log_type');
   markCache(c, 'log_type');
+  updateDupLevels(c);
+  $('#cache-meta').innerHTML = renderMeta(c);
+  setDupBanner(dupSummary());
   renderCacheList();
 });
 
@@ -807,6 +856,16 @@ function renderMeta(c) {
   if (c.attributes && c.attributes.length) {
     html += '<div class="attrs">' + c.attributes.map((a) => '<span class="attr">' + escapeHtml(a) + '</span>').join('') + '</div>';
   }
+  (c.duplicates || []).forEach((d) => {
+    const icon = d.level === 'warn' ? '⚠' : 'ℹ';
+    html += '<div class="dup-box ' + d.level + '">' + icon + ' ' + (d.same_tour
+      ? 'Dieser GC-Code kommt in dieser Tour mehrfach vor.'
+      : 'Bereits in Tour #' + d.tour_id + ' „' + escapeHtml(d.title || 'Tour') + '“ vom ' + escapeHtml(formatDate(d.date))
+        + ' als <b>' + escapeHtml(LOG_TYPE_LABELS[d.log_type] || d.log_type) + '</b>'
+        + (d.level === 'warn' ? ' – möglicher Doppelfund.' : '.')
+        + ' <button type="button" class="ghost open-tour" data-tour="' + d.tour_id + '">Tour #' + d.tour_id + ' öffnen ▸</button>')
+      + '</div>';
+  });
   if (c.own_log) {
     const when = c.own_log.ts ? formatLocalDateTime(c.own_log.ts) : formatDate(c.own_log.date);
     html += '<div class="own-log">✍️ Du hast bereits geloggt (' + escapeHtml(c.own_log.type)
@@ -1031,6 +1090,7 @@ async function openTour(id, opts = {}) {
     }
     $('#save-status').textContent = 'Tour #' + tour.id + ' geladen.'
       + (restored ? ' ' + restored + ' lokal gesicherte Änderung(en) wiederhergestellt.' : '');
+    setDupBanner(dupSummary());
     renderSaveIndicator();
     if (restored) flushEdits();
   } catch (ex) {

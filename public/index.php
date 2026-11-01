@@ -19,7 +19,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=16">
+    <link rel="stylesheet" href="assets/style.css?v=18">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -123,6 +123,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
                 <button id="btn-sort-time" class="ghost icon-btn" type="button" title="Nach Fundzeit sortieren" aria-label="Nach Fundzeit sortieren">⏱</button>
             </h2>
 
+            <p id="dup-banner" class="dup-box warn hidden"></p>
             <ul id="cache-list" class="cache-list"></ul>
 
             <label class="filelabel">
@@ -209,6 +210,6 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=18"></script>
+<script src="assets/app.js?v=21"></script>
 </body>
 </html>

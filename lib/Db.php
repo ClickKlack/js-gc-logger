@@ -758,9 +758,52 @@ final class Db
             $c['fieldnote_ts']   = $row['fieldnote_ts'];
             $caches[]   = $c;
         }
+        $dups = $this->findDuplicates($id);
+        foreach ($caches as &$c) {
+            $c['duplicates'] = $dups[$c['id']] ?? [];
+        }
+        unset($c);
         $tour['caches'] = $caches;
 
         return $tour;
+    }
+
+    /** Log-Typen, die als Fund zählen (Doppelfund-Warnung). */
+    public const FOUND_TYPES = ['Found it', 'Attended', 'Webcam Photo Taken'];
+
+    /**
+     * GC-Codes dieser Tour, die schon in anderen Touren oder mehrfach in dieser
+     * Tour vorkommen. Zählen beide Einträge als Fund → level "warn" (möglicher
+     * Doppelfund); ist einer davon DNF/Notiz → "info" (Wiederbesuch ist normal).
+     * @return array<int, list<array<string,mixed>>> je cache_log.id
+     */
+    public function findDuplicates(int $tourId): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT c.id AS cache_id, c.log_type AS own_type, o.id AS other_id, o.tour_id, t.title, o.log_type,
+                    COALESCE(o.visited_at, t.tour_date) AS date
+             FROM cache_log c
+             JOIN cache_log o ON o.code = c.code AND o.id <> c.id
+             JOIN tour t ON t.id = o.tour_id
+             WHERE c.tour_id = ? AND c.code <> ''
+             ORDER BY date, o.tour_id"
+        );
+        $stmt->execute([$tourId]);
+        $out = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $same = (int) $r['tour_id'] === $tourId;
+            $out[(int) $r['cache_id']][] = [
+                'tour_id'   => (int) $r['tour_id'],
+                'title'     => $r['title'],
+                'date'      => $r['date'],
+                'log_type'  => $r['log_type'],
+                'same_tour' => $same,
+                // gleiche Tour: immer Warnung (Code doppelt in der GPX)
+                'level'     => $same || (in_array($r['log_type'], self::FOUND_TYPES, true)
+                    && in_array($r['own_type'], self::FOUND_TYPES, true)) ? 'warn' : 'info',
+            ];
+        }
+        return $out;
     }
 
     /** Löscht eine Tour samt ihrer Cache-Logs. Gibt true zurück, wenn etwas gelöscht wurde. */

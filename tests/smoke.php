@@ -517,5 +517,33 @@ if (!is_file($fn2) || !is_file($gpx8)) {
 }
 
 // ---------------------------------------------------------------------------
+section('Doppelte GC-Codes (Schritt 9)');
+
+$db9 = new Db(tmpdir() . '/d.sqlite');
+$tA  = $db9->createTour([['code' => 'GCD1', 'name' => 'Eins'], ['code' => 'GCD2', 'name' => 'Zwei']], '<gpx/>', ['tour_date' => '2026-10-01', 'title' => 'Alt']);
+$cA  = array_column($db9->getTour($tA)['caches'], null, 'code');
+$db9->updateCache($cA['GCD2']['id'], ['log_type' => "Didn't find it"]);
+$tB  = $db9->createTour([['code' => 'GCD1', 'name' => 'Eins'], ['code' => 'GCD2', 'name' => 'Zwei'], ['code' => 'GCD3', 'name' => 'Drei'],
+    ['code' => 'GCD3', 'name' => 'Drei nochmal']], '<gpx/>', ['tour_date' => '2026-11-01']);
+$cB  = $db9->getTour($tB)['caches'];
+$d1  = $cB[0]['duplicates'];
+check('früherer Fund → Warnung mit Tour/Datum/Status', count($d1) === 1 && $d1[0]['level'] === 'warn' && $d1[0]['tour_id'] === $tA
+    && $d1[0]['title'] === 'Alt' && $d1[0]['date'] === '2026-10-01' && $d1[0]['log_type'] === 'Found it', json_encode($d1));
+check('früherer DNF → nur Info', ($cB[1]['duplicates'][0]['level'] ?? '') === 'info');
+check('doppelt in derselben GPX → Warnung', ($cB[2]['duplicates'][0]['same_tour'] ?? false) === true && $cB[2]['duplicates'][0]['level'] === 'warn'
+    && ($cB[3]['duplicates'][0]['same_tour'] ?? false) === true);
+check('Gegenrichtung: alte Tour sieht neue', count(array_column($db9->getTour($tA)['caches'], null, 'code')['GCD1']['duplicates']) === 1);
+$tC = $db9->createTour([['code' => 'GCD9', 'name' => 'Neu']], '<gpx/>');
+check('ohne Duplikat → leere Liste', $db9->getTour($tC)['caches'][0]['duplicates'] === []);
+$db9->updateCache($cB[0]['id'], ['log_type' => 'Write note']);
+check('eigener Eintrag nur Notiz (andere Tour Fund) → Info', $db9->getTour($tB)['caches'][0]['duplicates'][0]['level'] === 'info');
+check('… und Gegenrichtung ebenfalls Info', array_column($db9->getTour($tA)['caches'], null, 'code')['GCD1']['duplicates'][0]['level'] === 'info');
+$db9->updateCache($cB[0]['id'], ['log_type' => 'Found it']);
+$db9->updateCache($cA['GCD1']['id'], ['log_type' => 'Write note']);
+check('Status der alten Tour geändert → Info', $db9->getTour($tB)['caches'][0]['duplicates'][0]['level'] === 'info');
+$db9->deleteTour($tA);
+check('alte Tour gelöscht → keine Warnung mehr', $db9->getTour($tB)['caches'][0]['duplicates'] === []);
+
+// ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";
 exit($fails === 0 ? 0 : 1);
