@@ -15,6 +15,9 @@ final class Prompts
         - Natürlicher, freundlicher Ton; nicht werblich, keine Hashtags, keine Emojis-Flut.
         - Waren Begleiter dabei, schreibe in der Wir-Form, sonst in der Ich-Form.
         - Bedanke dich beim Owner für den Cache/das Versteck, ohne Spoiler zu verraten.
+        - Attribute des Caches (z. B. „Für Kinder geeignet“, „Besondere Aussicht“) darfst du aufgreifen, wenn sie passen; zähle sie nicht auf.
+        - Hat ein Cache viele Favoritenpunkte, darfst du würdigen, dass er beliebt ist bzw. zu Recht beliebt ist.
+        - Richte dich nach dem angegebenen Log-Status: Ein DNF- oder Notiz-Log ist kein Fund-Log.
         - Versuche trotzdem Bezüge zum Cache-Listing herzustellen (z. B. zum Namen, zur Art des Verstecks, zum Ort).
         - Variiere Formulierungen; vermeide immer gleiche Floskeln und Wiederholungen.
         - Länge passend zur Länge des Cachelistings: meist 2–10 Sätze, bei längeeren Listings gerne etwas ausführlicher, bei kurzen Listings eher kurz und knackig.
@@ -66,16 +69,11 @@ final class Prompts
         $notes   = trim($notes) !== '' ? trim($notes) : '(keine besonderen Notizen)';
         $name    = $cache['name'] ?? 'dieser Cache';
 
-        $details = [];
-        if (!empty($cache['type']))       { $details[] = 'Typ: ' . $cache['type']; }
-        if (!empty($cache['difficulty'])) { $details[] = 'Schwierigkeit (D): ' . $cache['difficulty']; }
-        if (!empty($cache['terrain']))    { $details[] = 'Gelände (T): ' . $cache['terrain']; }
-        if (!empty($cache['container']))  { $details[] = 'Behälter: ' . $cache['container']; }
-        if (!empty($cache['placed_by']))  { $details[] = 'Owner: ' . $cache['placed_by']; }
-        if (!empty($cache['country']))    { $details[] = 'Ort: ' . self::location($cache); }
         // Hint wird bewusst NICHT an die KI geschickt (sie schrieb ihn sonst ins Log).
         // Er bleibt nur lokal in der Detailansicht sichtbar.
+        $details    = self::details($cache);
         $detailText = $details !== [] ? implode("\n", $details) : '(keine weiteren Details)';
+        $statusRule = self::statusRule($cache);
 
         $listing      = trim((string) ($cache['listing'] ?? ''));
         $listingBlock = $listing !== '' ? $listing : '(kein Listing-Text vorhanden)';
@@ -98,6 +96,7 @@ final class Prompts
 
         Cache: $name
         $detailText
+        $statusRule
 
         Cache-Listing (vollständige Beschreibung des Owners – nutze sie als Inspiration für
         thematische Bezüge, aber kopiere sie NICHT wörtlich und verrate KEINE Lösung,
@@ -126,14 +125,9 @@ final class Prompts
             $code = (string) ($c['code'] ?? '');
             $name = (string) ($c['name'] ?? 'Cache');
 
-            $details = [];
-            if (!empty($c['type']))       { $details[] = 'Typ: ' . $c['type']; }
-            if (!empty($c['difficulty'])) { $details[] = 'D: ' . $c['difficulty']; }
-            if (!empty($c['terrain']))    { $details[] = 'T: ' . $c['terrain']; }
-            if (!empty($c['container']))  { $details[] = 'Behälter: ' . $c['container']; }
-            if (!empty($c['placed_by']))  { $details[] = 'Owner: ' . $c['placed_by']; }
-            if (!empty($c['country']))    { $details[] = 'Ort: ' . self::location($c); }
+            $details    = self::details($c);
             $detailLine = $details !== [] ? implode(', ', $details) : '(keine weiteren Details)';
+            $statusRule = self::statusRule($c);
 
             $listing = trim((string) ($c['listing'] ?? ''));
             $listing = $listing !== '' ? $listing : '(kein Listing-Text vorhanden)';
@@ -145,6 +139,7 @@ final class Prompts
             ===== CACHE code=$code =====
             Name: $name
             $detailLine
+            $statusRule
             Listing (nur als Inspiration, nicht wörtlich kopieren, keine Spoiler/Lösung/Koordinaten): $listing
             Meine Notizen (vollständig einarbeiten): $notes
             BLOCK . self::languageRule($c);
@@ -189,6 +184,60 @@ final class Prompts
         return $companions !== []
             ? 'Begleiter (im Log namentlich erwähnen): ' . implode(', ', $companions)
             : 'Begleiter: keine (alleine unterwegs, Ich-Form)';
+    }
+
+    /**
+     * Detailzeilen für den Prompt. Owner (groundspeak:owner) für den Dank;
+     * placed_by nur zusätzlich, wenn abweichend (kann mehrere Namen enthalten).
+     * @param array<string,mixed> $c
+     * @return list<string>
+     */
+    private static function details(array $c): array
+    {
+        $d = [];
+        $owner    = trim((string) ($c['owner'] ?? ''));
+        $placedBy = trim((string) ($c['placed_by'] ?? ''));
+        if ($owner === '') {
+            $owner = $placedBy;
+        }
+        if (!empty($c['type']))       { $d[] = 'Typ: ' . $c['type']; }
+        if (!empty($c['difficulty'])) { $d[] = 'Schwierigkeit (D): ' . $c['difficulty']; }
+        if (!empty($c['terrain']))    { $d[] = 'Gelände (T): ' . $c['terrain']; }
+        if (!empty($c['container']))  { $d[] = 'Behälter: ' . $c['container']; }
+        if ($owner !== '')            { $d[] = 'Owner (für den Dank): ' . $owner; }
+        if ($placedBy !== '' && mb_strtolower($placedBy) !== mb_strtolower($owner)) {
+            $d[] = 'Gelegt von: ' . $placedBy;
+        }
+        if (!empty($c['country']))    { $d[] = 'Ort: ' . self::location($c); }
+        if (!empty($c['attributes']) && is_array($c['attributes'])) {
+            $d[] = 'Attribute: ' . implode(', ', $c['attributes']);
+        }
+        if (isset($c['fav_points']) && $c['fav_points'] !== null && $c['fav_points'] !== '') {
+            $d[] = 'Favoritenpunkte: ' . (int) $c['fav_points'];
+        }
+        return $d;
+    }
+
+    /**
+     * Anweisung je Log-Status (geocaching.com-Typ). Fund ist der Normalfall.
+     * @param array<string,mixed> $c
+     */
+    private static function statusRule(array $c): string
+    {
+        return match ((string) ($c['log_type'] ?? 'Found it')) {
+            "Didn't find it"     => 'LOG-STATUS: NICHT GEFUNDEN (DNF). Schreibe ein DNF-Log: Wir haben gesucht, '
+                . 'aber nicht gefunden. Kein Dank fürs Finden und kein „gefunden“/„geloggt“; gerne Dank für den '
+                . 'Cache bzw. den schönen Ort. Keine Vermutungen über das Versteck (Spoiler).',
+            'Write note'         => 'LOG-STATUS: NOTIZ. Kein Fund-Log: Schreibe eine Notiz zum Besuch '
+                . '(z. B. Hinweis zum Zustand oder kurzer Besuchsbericht laut Notizen), ohne einen Fund zu behaupten.',
+            'Attended'           => 'LOG-STATUS: EVENT BESUCHT. Schreibe ein Teilnahme-Log für das Event '
+                . '(Begegnungen, Stimmung, Dank an die Veranstalter) statt eines Fund-Logs.',
+            'Will Attend'        => 'LOG-STATUS: TEILNAHME ANGEKÜNDIGT. Das Event liegt in der Zukunft: '
+                . 'kurze, freundliche Ankündigung, dass wir kommen – kein Erlebnisbericht.',
+            'Webcam Photo Taken' => 'LOG-STATUS: WEBCAM-FOTO. Wir haben uns vor der Webcam fotografiert; '
+                . 'schreibe das Log entsprechend.',
+            default              => 'LOG-STATUS: GEFUNDEN.',
+        };
     }
 
     /** Liegt der Cache außerhalb Deutschlands? Ohne Länderangabe: nein. */

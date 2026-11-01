@@ -88,6 +88,101 @@ register_shutdown_function(static function (): void {
     }
 });
 
+/** Inhalt der hochgeladenen GPX-Datei (Feld "gpx"). */
+function gpx_upload(): string
+{
+    if (!isset($_FILES['gpx']) || $_FILES['gpx']['error'] !== UPLOAD_ERR_OK) {
+        fail('Keine GPX-Datei empfangen.');
+    }
+    return (string) file_get_contents($_FILES['gpx']['tmp_name']);
+}
+
+/** JSON-Objekt aus einem POST-Feld (z. B. "fields"). */
+function post_json(string $key): array
+{
+    $v = json_decode((string) ($_POST[$key] ?? ''), true);
+    return is_array($v) ? $v : [];
+}
+
+/** GPX parsen; erkennt eigenes Log (gc_username) und Logs bekannter Begleiter. */
+function parse_gpx(string $xml, array $config): array
+{
+    $companions = (array) ($config['companions'] ?? []);
+    if (!empty($config['store_logs'])) {
+        $companions = array_merge($companions, (new Db((string) $config['db_path']))->knownCompanions());
+    }
+    return Gpx::parse($xml, (string) ($config['gc_username'] ?? ''), array_values(array_unique($companions)));
+}
+
+/**
+ * Export-Kandidaten je Empfänger (POST recipient, optional template für diesen Export).
+ * @return array{caches: list<array<string,mixed>>, recipient: string, recipients: list<string>,
+ *               template: string, template_source: string, unknown: list<string>, mitcacher: string, me: string}
+ */
+function export_candidates(Db $db, array $tour, array $config): array
+{
+    $me         = trim((string) ($config['gc_username'] ?? ''));
+    $recipients = array_values(array_filter((array) $tour['companions'], static fn ($n): bool =>
+        mb_strtolower((string) $n) !== mb_strtolower($me)));
+    $recipient  = trim((string) ($_POST['recipient'] ?? ''));
+    $base       = ['recipients' => $recipients, 'me' => $me];
+    if ($recipient === '' || $recipient === 'me') {
+        return $base + ['caches' => FieldNotesExport::candidatesForMe($tour), 'recipient' => '',
+            'template' => '', 'template_source' => '', 'unknown' => [], 'mitcacher' => ''];
+    }
+    if (!in_array($recipient, $recipients, true)) {
+        fail('„' . $recipient . '“ ist kein Begleiter dieser Tour.');
+    }
+    $tpl = $db->companionTemplate($recipient);
+    if (isset($_POST['template'])) {
+        $tpl = ['template' => (string) $_POST['template'], 'source' => 'edited'];
+    }
+    return $base + [
+        'caches'          => FieldNotesExport::candidatesForCompanion($tour, $recipient, $tpl['template'], $me),
+        'recipient'       => $recipient,
+        'template'        => $tpl['template'],
+        'template_source' => $tpl['source'],
+        'unknown'         => FieldNotesExport::unknownPlaceholders($tpl['template']),
+        'mitcacher'       => FieldNotesExport::mitcacher((array) $tour['companions'], $me, $recipient),
+    ];
+}
+
+/** Tour-IDs passend zu den Filtern im Request (wie list_tours); null = kein Filter aktiv. */
+function filtered_tour_ids(Db $db): ?array
+{
+    $filters = array_filter(array_intersect_key($_POST, array_flip(['code', 'date', 'companion', 'q'])),
+        static fn ($v): bool => is_string($v) && trim($v) !== '');
+    if ($filters === []) {
+        return null;
+    }
+    $ids = array_column($db->listTours($filters), 'id');
+    sort($ids);
+    return $ids;
+}
+
+/** Datei-Download statt JSON-Antwort (verwirft gepufferte Fremdausgaben). */
+function send_download(string $bytes, string $contentType, string $filename): never
+{
+    if (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    header('Content-Type: ' . $contentType);
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Content-Length: ' . strlen($bytes));
+    header('Cache-Control: no-store');
+    echo $bytes;
+    exit;
+}
+
+/** DB für Aktionen, die Speichern voraussetzen. */
+function storage_db(array $config): Db
+{
+    if (empty($config['store_logs'])) {
+        fail('Speichern ist in der Konfiguration deaktiviert.');
+    }
+    return new Db((string) $config['db_path']);
+}
+
 $action = (string) ($_POST['action'] ?? $_GET['action'] ?? '');
 dbg_log('Action: ' . ($action !== '' ? $action : '(leer)'));
 
@@ -113,12 +208,176 @@ try {
 
     switch ($action) {
         case 'upload_gpx': {
-            if (!isset($_FILES['gpx']) || $_FILES['gpx']['error'] !== UPLOAD_ERR_OK) {
-                fail('Keine GPX-Datei empfangen.');
+            // Nur parsen + Wiedererkennung prüfen; angelegt wird mit create_tour.
+            $xml    = gpx_upload();
+            $caches = parse_gpx($xml, $config);
+            $match  = !empty($config['store_logs'])
+                ? (new Db((string) $config['db_path']))->findMatch($caches)
+                : ['type' => 'none'];
+            respond(['ok' => true, 'caches' => $caches, 'match' => $match]);
+        }
+
+        case 'create_tour': {
+            // mode: new (Default) | add (neue Caches an tour_id anhängen) | refresh (nur GPX-Felder auffrischen)
+            $db     = storage_db($config);
+            $xml    = gpx_upload();
+            $caches = parse_gpx($xml, $config);
+            $mode   = (string) ($_POST['mode'] ?? 'new');
+            $added  = 0;
+            if ($mode === 'new') {
+                $id = $db->createTour($caches, $xml, post_json('meta'));
+            } elseif ($mode === 'add' || $mode === 'refresh') {
+                $id = (int) ($_POST['tour_id'] ?? 0);
+                if ($db->getTour($id) === null) {
+                    fail('Tour nicht gefunden.', 404);
+                }
+                $added = $db->mergeGpx($id, $caches, $xml, $mode === 'add');
+            } else {
+                fail('Unbekannter Modus.');
             }
-            $xml    = (string) file_get_contents($_FILES['gpx']['tmp_name']);
-            $caches = Gpx::parse($xml);
-            respond(['ok' => true, 'caches' => $caches]);
+            respond(['ok' => true, 'tour' => $db->getTour($id), 'added' => $added]);
+        }
+
+        case 'upload_fieldnotes': {
+            // c:geo-Feldnotizen in eine Tour übernehmen; sortiert direkt, wenn die Tour
+            // noch nicht von Hand umsortiert wurde, sonst Rückfrage (needs_confirm).
+            $db     = storage_db($config);
+            $tourId = (int) ($_POST['tour_id'] ?? 0);
+            $tour   = $db->getTour($tourId);
+            if ($tour === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            if (!isset($_FILES['fieldnotes']) || $_FILES['fieldnotes']['error'] !== UPLOAD_ERR_OK) {
+                fail('Keine Feldnotizen-Datei empfangen.');
+            }
+            try {
+                $entries = FieldNotes::parse((string) file_get_contents($_FILES['fieldnotes']['tmp_name']));
+            } catch (RuntimeException $e) {
+                fail($e->getMessage());
+            }
+            $stats  = $db->applyFieldNotes($tourId, $entries);
+            $sorted = false;
+            if (!$tour['manually_sorted'] && $stats['matched'] > 0) {
+                $db->sortByTime($tourId);
+                $sorted = true;
+            }
+            respond(['ok' => true, 'tour' => $db->getTour($tourId), 'stats' => $stats, 'sorted' => $sorted,
+                     'needs_confirm' => !$sorted && $stats['matched'] > 0]);
+        }
+
+        case 'sort_by_time': {
+            $db     = storage_db($config);
+            $tourId = (int) ($_POST['tour_id'] ?? 0);
+            if ($db->sortByTime($tourId) === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            respond(['ok' => true, 'tour' => $db->getTour($tourId)]);
+        }
+
+        case 'export_preview': {
+            // Kandidaten für die Draft-Datei (Vorschau + Auswahl im Dialog).
+            // recipient: '' / 'me' = eigene KI-Logs, sonst Begleiter der Tour (Vorlage).
+            $db   = storage_db($config);
+            $tour = $db->getTour((int) ($_POST['tour_id'] ?? 0));
+            if ($tour === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            respond(['ok' => true] + export_candidates($db, $tour, $config));
+        }
+
+        case 'export_fieldnotes': {
+            // Draft-Datei herunterladen: nur die gewählten Caches mit Text
+            $db   = storage_db($config);
+            $tour = $db->getTour((int) ($_POST['tour_id'] ?? 0));
+            if ($tour === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            $result  = export_candidates($db, $tour, $config);
+            $ids     = array_map('intval', (array) (json_decode((string) ($_POST['ids'] ?? '[]'), true) ?: []));
+            $entries = array_values(array_filter(
+                $result['caches'],
+                static fn (array $c): bool => $c['available'] && trim($c['text']) !== '' && in_array($c['id'], $ids, true)
+            ));
+            if ($entries === []) {
+                fail('Keine Caches mit Text ausgewählt.');
+            }
+            send_download(FieldNotesExport::build($entries), 'text/plain; charset=UTF-16LE',
+                FieldNotesExport::filename($tour, $result['recipient']));
+        }
+
+        case 'backup_json': {
+            // Manueller Backup-Export (F8): Daten als lesbares JSON — bei aktiven Filtern
+            // nur die gefilterten Touren
+            $db   = storage_db($config);
+            $ids  = filtered_tour_ids($db);
+            $json = json_encode($db->exportJson($ids), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE);
+            send_download($json, 'application/json; charset=utf-8',
+                'gc_logger-backup-' . date('Y-m-d-Hi') . ($ids !== null ? '-gefiltert' : '') . '.json');
+        }
+
+        case 'backup_gpx': {
+            // Caches + eigene Logs als GPX (c:geo/GSAK/Karten-Apps) — Filter wie JSON
+            $db    = storage_db($config);
+            $ids   = filtered_tour_ids($db);
+            $tours = array_values(array_filter(array_map(
+                static fn ($id): ?array => $db->getTour((int) $id),
+                $ids ?? $db->pdo()->query('SELECT id FROM tour ORDER BY id')->fetchAll(PDO::FETCH_COLUMN)
+            )));
+            send_download(GpxExport::build($tours, (string) ($config['gc_username'] ?? '')), 'application/gpx+xml; charset=utf-8',
+                'gc_logger-caches-' . date('Y-m-d-Hi') . ($ids !== null ? '-gefiltert' : '') . '.gpx');
+        }
+
+        case 'backup_sqlite': {
+            // Manueller Backup-Export (F8): konsistente Kopie der Datenbank
+            $db   = storage_db($config);
+            $file = $db->exportSqliteCopy();
+            $data = (string) file_get_contents($file);
+            @unlink($file);
+            send_download($data, 'application/vnd.sqlite3', 'gc_logger-backup-' . date('Y-m-d-Hi') . '.sqlite');
+        }
+
+        case 'save_template': {
+            // name = '' → Standardvorlage, sonst Vorlage für diesen Begleiter
+            $db = storage_db($config);
+            $db->saveTemplate(trim((string) ($_POST['name'] ?? '')), (string) ($_POST['template'] ?? ''));
+            respond(['ok' => true]);
+        }
+
+        case 'update_tour': {
+            $db = storage_db($config);
+            try {
+                $updatedAt = $db->updateTour((int) ($_POST['id'] ?? 0), post_json('fields'));
+            } catch (InvalidArgumentException $e) {
+                fail($e->getMessage());
+            }
+            if ($updatedAt === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            respond(['ok' => true, 'updated_at' => $updatedAt]);
+        }
+
+        case 'update_cache': {
+            $db  = storage_db($config);
+            try {
+                $res = $db->updateCache((int) ($_POST['id'] ?? 0), post_json('fields'));
+            } catch (InvalidArgumentException $e) {
+                fail($e->getMessage());
+            }
+            if ($res === null) {
+                fail('Cache nicht gefunden.', 404);
+            }
+            respond(['ok' => true] + $res);
+        }
+
+        case 'reorder': {
+            $db  = storage_db($config);
+            $ids = json_decode((string) ($_POST['ids'] ?? '[]'), true);
+            try {
+                $updatedAt = $db->reorder((int) ($_POST['tour_id'] ?? 0), is_array($ids) ? $ids : []);
+            } catch (InvalidArgumentException $e) {
+                fail($e->getMessage());
+            }
+            respond(['ok' => true, 'updated_at' => $updatedAt]);
         }
 
         case 'generate_context': {
@@ -179,22 +438,14 @@ try {
             respond(['ok' => true, 'logs' => $logs, 'rejected' => $rejected, 'count' => count($logs)]);
         }
 
-        case 'save': {
-            if (empty($config['store_logs'])) {
-                fail('Speichern ist in der Konfiguration deaktiviert.');
-            }
-            $db      = new Db((string) $config['db_path']);
-            $payload = json_decode((string) ($_POST['tour'] ?? '{}'), true) ?: [];
-            $id      = $db->saveTour($payload);
-            respond(['ok' => true, 'id' => $id]);
-        }
-
         case 'list_tours': {
             if (empty($config['store_logs'])) {
                 respond(['ok' => true, 'tours' => []]);
             }
             $db = new Db((string) $config['db_path']);
-            respond(['ok' => true, 'tours' => $db->listTours()]);
+            $filters = array_filter(array_intersect_key($_POST, array_flip(['code', 'date', 'companion', 'q'])), 'is_string');
+            $result  = $db->listToursPage($filters, (int) ($_POST['page'] ?? 1));
+            respond(['ok' => true, 'companions' => $db->companionChoices((array) ($config['companions'] ?? []))] + $result);
         }
 
         case 'get_tour': {

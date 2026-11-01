@@ -18,9 +18,20 @@ $config = require $configPath;
 
 require __DIR__ . '/Auth.php';
 require __DIR__ . '/Gpx.php';
+require __DIR__ . '/FieldNotes.php';
+require __DIR__ . '/FieldNotesExport.php';
+require __DIR__ . '/GpxExport.php';
 require __DIR__ . '/Gemini.php';
 require __DIR__ . '/Prompts.php';
 require __DIR__ . '/BatchLogs.php';
 require __DIR__ . '/Db.php';
+
+Auth::init(
+    static function () use ($config): Db {
+        static $db = null;
+        return $db ??= new Db((string) $config['db_path']);
+    },
+    (string) ($config['password_hash'] ?? '')
+);
 
 return $config;

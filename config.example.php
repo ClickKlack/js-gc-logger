@@ -45,4 +45,8 @@ return [
 
     // Feste Vorauswahl der Begleiter (Checkboxen im Frontend).
     'companions' => ['die-steffi', 'Clicki17', 'Felix_GC', 'emblinux'],
+
+    // Eigener geocaching.com-Name: erkennt das eigene Log in der GPX und ist
+    // Teil von {mitcacher} beim Field-Notes-Export für Begleiter.
+    'gc_username' => 'ClickKlack',
 ];
