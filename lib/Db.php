@@ -158,6 +158,12 @@ final class Db
                     }
                 }
             },
+            // 6: Freigabe-Links (spec-v3); Tabellen share* kommen aus schema.sql
+            function (): void {
+                $this->addColumnIfMissing('companion', 'template_changed_at', 'TEXT');
+                $this->addColumnIfMissing('companion', 'template_changed_by', 'TEXT');
+                $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_share_expires ON share(expires_at)');
+            },
         ];
     }
 
@@ -220,11 +226,13 @@ final class Db
     /** Field-Notes-Vorlage für einen Begleiter: eigene, sonst Standard (DB), sonst eingebaut. */
     public function companionTemplate(string $name): array
     {
-        $stmt = $this->pdo->prepare("SELECT template FROM companion WHERE name = ? AND COALESCE(template, '') <> ''");
+        $stmt = $this->pdo->prepare("SELECT template, template_changed_at, template_changed_by FROM companion
+                                     WHERE name = ? AND COALESCE(template, '') <> ''");
         $stmt->execute([$name]);
-        $own = $stmt->fetchColumn();
-        if (is_string($own)) {
-            return ['template' => $own, 'source' => 'companion'];
+        $own = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($own !== false) {
+            return ['template' => (string) $own['template'], 'source' => 'companion',
+                    'changed_at' => $own['template_changed_at'], 'changed_by' => $own['template_changed_by']];
         }
         $default = $this->pdo->query("SELECT value FROM setting WHERE key = 'fieldnotes_template'")->fetchColumn();
         return is_string($default) && $default !== ''
@@ -232,8 +240,12 @@ final class Db
             : ['template' => FieldNotesExport::DEFAULT_TEMPLATE, 'source' => 'builtin'];
     }
 
-    /** Vorlage speichern: $name = '' → Standardvorlage, sonst je Begleiter. Leer = löschen. */
-    public function saveTemplate(string $name, string $template): void
+    /**
+     * Vorlage speichern: $name = '' → Standardvorlage, sonst je Begleiter. Leer = löschen.
+     * $by: 'me' oder 'share' (Begleiter über seinen Freigabe-Link) — für den Hinweis im
+     * Export-Dialog.
+     */
+    public function saveTemplate(string $name, string $template, string $by = 'me'): void
     {
         $template = str_replace(["\r\n", "\r"], "\n", $template);
         if ($name === '') {
@@ -241,8 +253,161 @@ final class Db
                                  ON CONFLICT(key) DO UPDATE SET value = excluded.value")->execute([$template]);
             return;
         }
-        $this->pdo->prepare('INSERT INTO companion (name, template) VALUES (?, ?)
-                             ON CONFLICT(name) DO UPDATE SET template = excluded.template')->execute([$name, $template]);
+        $this->pdo->prepare('INSERT INTO companion (name, template, template_changed_at, template_changed_by) VALUES (?, ?, ?, ?)
+                             ON CONFLICT(name) DO UPDATE SET template = excluded.template,
+                                 template_changed_at = excluded.template_changed_at,
+                                 template_changed_by = excluded.template_changed_by')
+            ->execute([$name, $template, self::utcNow(), $by]);
+    }
+
+    /** UTC-Zeitstempel im SQLite-Format (vergleichbar mit datetime('now')). */
+    private static function utcNow(int $offsetSeconds = 0): string
+    {
+        return gmdate('Y-m-d H:i:s', time() + $offsetSeconds);
+    }
+
+    // --- Freigabe-Links (spec-v3) -------------------------------------------
+
+    /** Gültigkeit eines Freigabe-Links in Tagen (nicht verlängerbar). */
+    public const SHARE_DAYS = 14;
+
+    /**
+     * Neuer Freigabe-Link für einen Begleiter auf die angegebenen Touren. Jede Tour muss
+     * den Begleiter haben (tour_companion).
+     * @param list<int> $tourIds
+     * @return array<string,mixed> wie findShare()
+     * @throws InvalidArgumentException bei fehlendem Empfänger/Touren oder fremder Tour
+     */
+    public function createShare(string $recipient, array $tourIds): array
+    {
+        $recipient = trim($recipient);
+        $tourIds   = array_values(array_unique(array_map('intval', $tourIds)));
+        if ($recipient === '' || $tourIds === []) {
+            throw new InvalidArgumentException('Empfänger und mindestens eine Tour wählen.');
+        }
+        $has = $this->pdo->prepare('SELECT 1 FROM tour_companion WHERE tour_id = ? AND name = ?');
+        foreach ($tourIds as $id) {
+            $has->execute([$id, $recipient]);
+            if ($has->fetchColumn() === false) {
+                throw new InvalidArgumentException('„' . $recipient . '“ war bei Tour ' . $id . ' nicht dabei.');
+            }
+        }
+
+        $token = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
+        $this->pdo->beginTransaction();
+        try {
+            $this->pdo->prepare('INSERT INTO share (token, recipient, created_at, expires_at) VALUES (?, ?, ?, ?)')
+                ->execute([$token, $recipient, self::utcNow(), self::utcNow(self::SHARE_DAYS * 86400)]);
+            $id  = (int) $this->pdo->lastInsertId();
+            $ins = $this->pdo->prepare('INSERT INTO share_tour (share_id, tour_id) VALUES (?, ?)');
+            foreach ($tourIds as $tid) {
+                $ins->execute([$id, $tid]);
+            }
+            $this->pdo->commit();
+        } catch (Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+        return $this->shareRow($id);
+    }
+
+    /** Abgelaufene Freigaben und solche ohne (verbliebene) Touren löschen. */
+    public function purgeShares(): void
+    {
+        $this->pdo->prepare('DELETE FROM share WHERE expires_at < ?
+                             OR NOT EXISTS (SELECT 1 FROM share_tour st WHERE st.share_id = share.id)')
+            ->execute([self::utcNow()]);
+    }
+
+    /**
+     * Gültige Freigabe zum Token (setzt last_used_at), sonst null.
+     * @return array{id:int, token:string, recipient:string, created_at:string, expires_at:string,
+     *               last_used_at:?string, downloads:int, tour_ids:list<int>}|null
+     */
+    public function findShare(string $token): ?array
+    {
+        $this->purgeShares();
+        $stmt = $this->pdo->prepare('SELECT id FROM share WHERE token = ?');
+        $stmt->execute([$token]);
+        $id = $stmt->fetchColumn();
+        if ($id === false) {
+            return null;
+        }
+        $this->pdo->prepare('UPDATE share SET last_used_at = ? WHERE id = ?')->execute([self::utcNow(), $id]);
+        return $this->shareRow((int) $id);
+    }
+
+    /**
+     * Alle gültigen Freigaben, neueste zuerst, mit Touren und Anzahl exportierter Caches.
+     * @return list<array<string,mixed>>
+     */
+    public function listShares(): array
+    {
+        $this->purgeShares();
+        $ids = $this->pdo->query('SELECT id FROM share ORDER BY created_at DESC, id DESC')->fetchAll(PDO::FETCH_COLUMN);
+        $tours = $this->pdo->prepare('SELECT t.id, t.tour_date, t.title FROM share_tour st JOIN tour t ON t.id = st.tour_id
+                                      WHERE st.share_id = ? ORDER BY t.tour_date DESC, t.id DESC');
+        $out = [];
+        foreach ($ids as $id) {
+            $s = $this->shareRow((int) $id);
+            $tours->execute([$id]);
+            $s['tours'] = array_map(static fn (array $t): array => ['id' => (int) $t['id']] + $t,
+                $tours->fetchAll(PDO::FETCH_ASSOC));
+            $s['exported'] = count($this->exportedCaches((int) $id));
+            $out[] = $s;
+        }
+        return $out;
+    }
+
+    public function deleteShare(int $id): bool
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM share WHERE id = ?');
+        $stmt->execute([$id]);
+        return $stmt->rowCount() > 0;
+    }
+
+    /** @return array<int,string> cache_log.id → exported_at (UTC) */
+    public function exportedCaches(int $shareId): array
+    {
+        $stmt = $this->pdo->prepare('SELECT cache_id, exported_at FROM share_export WHERE share_id = ?');
+        $stmt->execute([$shareId]);
+        $out = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_NUM) as [$cid, $at]) {
+            $out[(int) $cid] = (string) $at;
+        }
+        return $out;
+    }
+
+    /** Download über den Link: Caches als exportiert merken, Download zählen. */
+    public function markExported(int $shareId, array $cacheIds): void
+    {
+        $now = self::utcNow();
+        $this->pdo->beginTransaction();
+        try {
+            $ins = $this->pdo->prepare('INSERT OR IGNORE INTO share_export (share_id, cache_id, exported_at) VALUES (?, ?, ?)');
+            foreach ($cacheIds as $cid) {
+                $ins->execute([$shareId, (int) $cid, $now]);
+            }
+            $this->pdo->prepare('UPDATE share SET downloads = downloads + 1 WHERE id = ?')->execute([$shareId]);
+            $this->pdo->commit();
+        } catch (Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    /** @return array<string,mixed> */
+    private function shareRow(int $id): array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM share WHERE id = ?');
+        $stmt->execute([$id]);
+        $s = $stmt->fetch(PDO::FETCH_ASSOC);
+        $s['id']        = (int) $s['id'];
+        $s['downloads'] = (int) $s['downloads'];
+        $t = $this->pdo->prepare('SELECT tour_id FROM share_tour WHERE share_id = ? ORDER BY tour_id');
+        $t->execute([$id]);
+        $s['tour_ids'] = array_map('intval', $t->fetchAll(PDO::FETCH_COLUMN));
+        return $s;
     }
 
     /** Alle je verwendeten Begleiter (für Erkennung ihrer Logs in der GPX). */
@@ -1032,8 +1197,10 @@ final class Db
         // cache_log explizit löschen (unabhängig von ON DELETE CASCADE)
         $this->pdo->prepare('DELETE FROM cache_log WHERE tour_id = ?')->execute([$id]);
         $this->pdo->prepare('DELETE FROM tour_companion WHERE tour_id = ?')->execute([$id]);
+        $this->pdo->prepare('DELETE FROM share_tour WHERE tour_id = ?')->execute([$id]);
         $stmt = $this->pdo->prepare('DELETE FROM tour WHERE id = ?');
         $stmt->execute([$id]);
+        $this->purgeShares();   // Freigaben ohne Touren
 
         return $stmt->rowCount() > 0;
     }

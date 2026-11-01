@@ -63,10 +63,40 @@ CREATE TABLE IF NOT EXISTS auth_token (
 
 CREATE TABLE IF NOT EXISTS companion (
     name     TEXT PRIMARY KEY,
-    template TEXT                -- eigene Field-Notes-Vorlage (ersetzt Standard)
+    template TEXT,               -- eigene Field-Notes-Vorlage (ersetzt Standard)
+    template_changed_at TEXT,    -- letzte Änderung der Vorlage (UTC)
+    template_changed_by TEXT     -- 'me' | 'share' (Begleiter über Freigabe-Link)
 );
 
 CREATE TABLE IF NOT EXISTS setting (
     key   TEXT PRIMARY KEY,
     value TEXT
+);
+
+-- Freigabe-Links (spec-v3): Begleiter exportiert seine Field Notes ohne Login
+CREATE TABLE IF NOT EXISTS share (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    token        TEXT NOT NULL UNIQUE,   -- Klartext (Link bleibt kopierbar)
+    recipient    TEXT NOT NULL,          -- Begleiter-Name wie in tour_companion
+    created_at   TEXT NOT NULL,          -- UTC
+    expires_at   TEXT NOT NULL,          -- UTC
+    last_used_at TEXT,
+    downloads    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS share_tour (
+    share_id INTEGER NOT NULL,
+    tour_id  INTEGER NOT NULL,
+    PRIMARY KEY (share_id, tour_id),
+    FOREIGN KEY (share_id) REFERENCES share(id) ON DELETE CASCADE,
+    FOREIGN KEY (tour_id) REFERENCES tour(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS share_export (
+    share_id    INTEGER NOT NULL,
+    cache_id    INTEGER NOT NULL,
+    exported_at TEXT NOT NULL,           -- UTC
+    PRIMARY KEY (share_id, cache_id),
+    FOREIGN KEY (share_id) REFERENCES share(id) ON DELETE CASCADE,
+    FOREIGN KEY (cache_id) REFERENCES cache_log(id) ON DELETE CASCADE
 );

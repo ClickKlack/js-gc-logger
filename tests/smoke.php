@@ -711,8 +711,9 @@ check('ohne gespeicherte Vorlage → eingebaute', $db12->companionTemplate('Clic
 $db12->saveTemplate('', 'Standard {cachename}');
 check('Standardvorlage aus DB', $db12->companionTemplate('Clicki17') === ['template' => 'Standard {cachename}', 'source' => 'default']);
 $db12->saveTemplate('Clicki17', "Für Clicki17\r\n{cachename}");
-check('Vorlage je Begleiter ersetzt Standard (CRLF → LF)', $db12->companionTemplate('Clicki17') === ['template' => "Für Clicki17\n{cachename}", 'source' => 'companion']
-    && $db12->companionTemplate('die-steffi')['source'] === 'default');
+check('Vorlage je Begleiter ersetzt Standard (CRLF → LF)', array_intersect_key($db12->companionTemplate('Clicki17'), ['template' => 1, 'source' => 1])
+        === ['template' => "Für Clicki17\n{cachename}", 'source' => 'companion']
+    &&$db12->companionTemplate('die-steffi')['source'] === 'default');
 $db12->saveTemplate('Clicki17', '');
 check('leere Begleiter-Vorlage → wieder Standard', $db12->companionTemplate('Clicki17')['source'] === 'default');
 
@@ -781,6 +782,77 @@ check('GPX: Cache ohne Log ohne <logs>', !isset($sx->wpt[1]->children('http://ww
 $jf = $db14->exportJson([$tB14]);
 check('JSON gefiltert: nur Tour B, als gefiltert markiert', $jf['filtered'] === true && count($jf['tours']) === 1 && $jf['tours'][0]['title'] === 'Tour B');
 check('JSON ungefiltert: alle', $db14->exportJson()['filtered'] === false && count($db14->exportJson()['tours']) === 2);
+
+// ---------------------------------------------------------------------------
+section('Freigabe-Links (spec-v3 Schritt 1)');
+
+$dbS = new Db(tmpdir() . '/share.sqlite');
+check('Migration 6: user_version = 6', (int) $dbS->pdo()->query('PRAGMA user_version')->fetchColumn() === 6);
+$tS1 = $dbS->createTour([['code' => 'GCS1', 'name' => 'S1'], ['code' => 'GCS2', 'name' => 'S2']], '<gpx/>',
+    ['companions' => ['Clicki17', 'die-steffi'], 'tour_date' => '2026-10-31']);
+$tS2 = $dbS->createTour([['code' => 'GCS3', 'name' => 'S3']], '<gpx/>', ['companions' => ['Clicki17'], 'tour_date' => '2026-11-01']);
+$tS3 = $dbS->createTour([['code' => 'GCS4', 'name' => 'S4']], '<gpx/>', ['companions' => ['die-steffi']]);
+
+$sh = $dbS->createShare('Clicki17', [$tS1, $tS2, $tS2]);
+check('Token: 43 Zeichen base64url', (bool) preg_match('/^[A-Za-z0-9_-]{43}$/', $sh['token']), $sh['token']);
+check('Touren doppelt → einmal', $sh['tour_ids'] === [$tS1, $tS2]);
+check('Ablauf 14 Tage', abs(strtotime($sh['expires_at'] . ' UTC') - (time() + Db::SHARE_DAYS * 86400)) < 60);
+$err = null;
+try {
+    $dbS->createShare('Clicki17', [$tS1, $tS3]);
+} catch (InvalidArgumentException $e) {
+    $err = $e->getMessage();
+}
+check('Tour ohne den Empfänger → abgelehnt', $err !== null && (int) $dbS->pdo()->query('SELECT COUNT(*) FROM share')->fetchColumn() === 1, (string) $err);
+$err = null;
+try {
+    $dbS->createShare('Clicki17', []);
+} catch (InvalidArgumentException $e) {
+    $err = $e->getMessage();
+}
+check('ohne Touren → abgelehnt', $err !== null);
+
+$found = $dbS->findShare($sh['token']);
+check('findShare: gültig, last_used_at gesetzt', $found !== null && $found['recipient'] === 'Clicki17' && $found['last_used_at'] !== null);
+check('findShare: falsches Token → null', $dbS->findShare(str_repeat('A', 43)) === null);
+
+$cS = array_column($dbS->getTour($tS1)['caches'], 'id');
+$dbS->markExported($sh['id'], [$cS[0]]);
+$dbS->markExported($sh['id'], [$cS[0], $cS[1]]);
+$exp = $dbS->exportedCaches($sh['id']);
+check('markExported: beide gemerkt, Downloads gezählt', array_keys($exp) === [$cS[0], $cS[1]] && $dbS->findShare($sh['token'])['downloads'] === 2);
+$ls = $dbS->listShares();
+check('listShares: Touren + Anzahl exportiert', count($ls) === 1 && count($ls[0]['tours']) === 2 && $ls[0]['exported'] === 2
+    && $ls[0]['tours'][0]['id'] === $tS2);
+
+$dbS->deleteTour($tS1);
+check('Tour gelöscht → Freigabe behält restliche Tour, Exporte weg',
+    $dbS->findShare($sh['token'])['tour_ids'] === [$tS2] && $dbS->exportedCaches($sh['id']) === []);
+$dbS->deleteTour($tS2);
+check('letzte Tour gelöscht → Freigabe weg', $dbS->findShare($sh['token']) === null
+    && (int) $dbS->pdo()->query('SELECT COUNT(*) FROM share')->fetchColumn() === 0);
+
+$sh2 = $dbS->createShare('die-steffi', [$tS3]);
+$dbS->pdo()->exec("UPDATE share SET expires_at = '2000-01-01 00:00:00'");
+check('abgelaufen → null + gelöscht', $dbS->findShare($sh2['token']) === null
+    && (int) $dbS->pdo()->query('SELECT COUNT(*) FROM share_tour')->fetchColumn() === 0);
+$sh3 = $dbS->createShare('die-steffi', [$tS3]);
+check('widerrufen', $dbS->deleteShare($sh3['id']) && $dbS->findShare($sh3['token']) === null);
+
+$dbS->saveTemplate('Clicki17', 'Von ihm {cachename}', 'share');
+$tp = $dbS->companionTemplate('Clicki17');
+check('Vorlage über Link: changed_by = share', $tp['template'] === 'Von ihm {cachename}' && $tp['changed_by'] === 'share' && $tp['changed_at'] !== null);
+$dbS->saveTemplate('Clicki17', 'Von mir');
+check('Vorlage von mir: changed_by = me', $dbS->companionTemplate('Clicki17')['changed_by'] === 'me');
+
+if (($srcS = copyLocalDb($root, tmpdir())) !== null) {
+    $dbL = new Db($srcS);
+    $cols = $dbL->pdo()->query('PRAGMA table_info(companion)')->fetchAll(PDO::FETCH_COLUMN, 1);
+    check('lokale DB: auf Version 6 migriert, companion-Spalten da',
+        (int) $dbL->pdo()->query('PRAGMA user_version')->fetchColumn() === 6 && in_array('template_changed_by', $cols, true));
+} else {
+    skip('lokale DB fehlt (Migration 6 auf Bestandsdaten)');
+}
 
 // ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";
