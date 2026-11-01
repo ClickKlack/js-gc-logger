@@ -104,6 +104,16 @@ function post_json(string $key): array
     return is_array($v) ? $v : [];
 }
 
+/** GPX parsen; erkennt eigenes Log (gc_username) und Logs bekannter Begleiter. */
+function parse_gpx(string $xml, array $config): array
+{
+    $companions = (array) ($config['companions'] ?? []);
+    if (!empty($config['store_logs'])) {
+        $companions = array_merge($companions, (new Db((string) $config['db_path']))->knownCompanions());
+    }
+    return Gpx::parse($xml, (string) ($config['gc_username'] ?? ''), array_values(array_unique($companions)));
+}
+
 /** DB für Aktionen, die Speichern voraussetzen. */
 function storage_db(array $config): Db
 {
@@ -140,7 +150,7 @@ try {
         case 'upload_gpx': {
             // Nur parsen + Wiedererkennung prüfen; angelegt wird mit create_tour.
             $xml    = gpx_upload();
-            $caches = Gpx::parse($xml);
+            $caches = parse_gpx($xml, $config);
             $match  = !empty($config['store_logs'])
                 ? (new Db((string) $config['db_path']))->findMatch($caches)
                 : ['type' => 'none'];
@@ -151,7 +161,7 @@ try {
             // mode: new (Default) | add (neue Caches an tour_id anhängen) | refresh (nur GPX-Felder auffrischen)
             $db     = storage_db($config);
             $xml    = gpx_upload();
-            $caches = Gpx::parse($xml);
+            $caches = parse_gpx($xml, $config);
             $mode   = (string) ($_POST['mode'] ?? 'new');
             $added  = 0;
             if ($mode === 'new') {

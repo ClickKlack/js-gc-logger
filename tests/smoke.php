@@ -273,5 +273,114 @@ if (isset($dbPath) && $dbPath !== null) {
 }
 
 // ---------------------------------------------------------------------------
+section('GPX-Parser-Erweiterungen + Prompt (Schritt 6)');
+
+foreach (glob($root . '/spec/*.gpx') ?: [] as $f) {
+    $cs = Gpx::parse((string) file_get_contents($f));
+    $isCgeo = str_contains((string) file_get_contents($f), 'c:geo');
+    if ($isCgeo) {
+        check(basename($f) . ': Owner + Attribute + Favoriten',
+            array_filter($cs, fn ($c) => $c['owner'] === '' || !is_array($c['attributes']) || $c['fav_points'] === null) === []);
+    }
+}
+$cg = $root . '/spec/export-2026-11-01-13-07-47-2 Verlauf.gpx';
+if (is_file($cg)) {
+    $byCode = array_column(Gpx::parse((string) file_get_contents($cg)), null, 'code');
+    check('c:geo: verneintes Attribut bleibt lesbar', in_array('Nicht rollstuhlgerecht', $byCode['GCBPV6W']['attributes'] ?? [], true),
+        json_encode($byCode['GCBPV6W']['attributes'] ?? null, JSON_UNESCAPED_UNICODE));
+    check('c:geo: Favoritenpunkte 11', ($byCode['GCBPV6W']['fav_points'] ?? null) === 11);
+}
+
+$pq = <<<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<gpx xmlns="http://www.topografix.com/GPX/1/0" creator="Groundspeak Pocket Query"
+     xmlns:groundspeak="http://www.groundspeak.com/cache/1/0/1" xmlns:gsak="http://www.gsak.net/xmlv1/6">
+  <wpt lat="54.1" lon="9.1"><name>GCAAA01</name>
+    <groundspeak:cache><groundspeak:name>Mit Logs</groundspeak:name>
+      <groundspeak:placed_by>deichbehren, DinoSijoru</groundspeak:placed_by><groundspeak:owner>deichbehren</groundspeak:owner>
+      <groundspeak:type>Traditional Cache</groundspeak:type>
+      <groundspeak:attributes>
+        <groundspeak:attribute id="24" inc="0">Wheelchair accessible</groundspeak:attribute>
+        <groundspeak:attribute id="6" inc="1">Recommended for kids</groundspeak:attribute>
+      </groundspeak:attributes>
+      <groundspeak:logs>
+        <groundspeak:log id="1"><groundspeak:date>2026-10-30T19:00:00Z</groundspeak:date><groundspeak:type>Found it</groundspeak:type>
+          <groundspeak:finder>Fremder</groundspeak:finder><groundspeak:text>GEHEIMER FREMDTEXT</groundspeak:text></groundspeak:log>
+        <groundspeak:log id="2"><groundspeak:date>2026-10-31T08:00:00Z</groundspeak:date><groundspeak:type>Found it</groundspeak:type>
+          <groundspeak:finder>Clicki17</groundspeak:finder><groundspeak:text>BEGLEITERTEXT</groundspeak:text></groundspeak:log>
+        <groundspeak:log id="3"><groundspeak:date>2026-10-20T08:00:00Z</groundspeak:date><groundspeak:type>Write note</groundspeak:type>
+          <groundspeak:finder>clickklack</groundspeak:finder><groundspeak:text>alt</groundspeak:text></groundspeak:log>
+        <groundspeak:log id="4"><groundspeak:date>2026-10-31T08:00:00Z</groundspeak:date><groundspeak:type>Didn't find it</groundspeak:type>
+          <groundspeak:finder>ClickKlack</groundspeak:finder><groundspeak:text>EIGENER TEXT</groundspeak:text></groundspeak:log>
+      </groundspeak:logs>
+    </groundspeak:cache>
+    <gsak:wptExtension><gsak:FavPoints>42</gsak:FavPoints><gsak:GcNote>FINAL N 54 12.345 E 009 01.234</gsak:GcNote></gsak:wptExtension>
+  </wpt>
+  <wpt lat="54.2" lon="9.2"><name>GCAAA02</name>
+    <groundspeak:cache><groundspeak:name>Ein Event</groundspeak:name><groundspeak:type>Event Cache</groundspeak:type></groundspeak:cache>
+    <gsak:wptExtension><gsak:UserFound>2026-10-29T00:00:00Z</gsak:UserFound></gsak:wptExtension>
+  </wpt>
+  <wpt lat="54.3" lon="9.3"><name>GCAAA03</name>
+    <groundspeak:cache><groundspeak:name>Webcam</groundspeak:name><groundspeak:type>Webcam Cache</groundspeak:type></groundspeak:cache>
+  </wpt>
+</gpx>
+XML;
+$p = array_column(Gpx::parse($pq, 'ClickKlack', ['die-steffi', 'Clicki17']), null, 'code');
+$a = $p['GCAAA01'];
+check('Owner getrennt von placed_by', $a['owner'] === 'deichbehren' && $a['placed_by'] === 'deichbehren, DinoSijoru');
+check('PQ: verneintes Attribut markiert', $a['attributes'] === ['nicht: Wheelchair accessible', 'Recommended for kids'],
+    json_encode($a['attributes']));
+check('Favoritenpunkte aus gsak', $a['fav_points'] === 42);
+check('eigenes Log: neuestes, Name ohne Groß/Klein, mit Uhrzeit',
+    $a['own_log'] === ['type' => "Didn't find it", 'date' => '2026-10-31', 'ts' => '2026-10-31T08:00:00Z'], json_encode($a['own_log']));
+check('Begleiter-Log ohne Text', $a['companion_logs'] === [['name' => 'Clicki17', 'type' => 'Found it', 'date' => '2026-10-31']]);
+$dump = json_encode($p, JSON_UNESCAPED_UNICODE);
+check('GcNote nirgends im Ergebnis', !str_contains($dump, 'FINAL') && !str_contains($dump, '12.345'));
+check('keine Logtexte im Ergebnis', !str_contains($dump, 'GEHEIMER') && !str_contains($dump, 'BEGLEITERTEXT') && !str_contains($dump, 'EIGENER'));
+check('Fundstatus (gsak:UserFound) als Fallback, 00:00 ohne Uhrzeit',
+    $p['GCAAA02']['own_log'] === ['type' => 'Found it', 'date' => '2026-10-29', 'ts' => null], json_encode($p['GCAAA02']['own_log']));
+
+check('Start-Status: eigenes Log', Db::defaultLogType($a) === "Didn't find it");
+check('Start-Status: Event → Attended', Db::defaultLogType(['type' => 'Event Cache']) === 'Attended');
+check('Start-Status: Event mit Fundstatus → Attended statt Found it', Db::defaultLogType($p['GCAAA02']) === 'Attended');
+check('Start-Status: Webcam', Db::defaultLogType($p['GCAAA03']) === 'Webcam Photo Taken');
+check('Start-Status: sonst Found it', Db::defaultLogType(['type' => 'Traditional Cache']) === 'Found it');
+
+$db6 = new Db(tmpdir() . '/p.sqlite');
+$t6  = $db6->getTour($db6->createTour(array_values($p), $pq, ['tour_date' => '2026-11-01']));
+$c6  = array_column($t6['caches'], null, 'code');
+check('Tour: Status/Datum/Uhrzeit aus eigenem Log', $c6['GCAAA01']['log_type'] === "Didn't find it"
+    && $c6['GCAAA01']['visited_at'] === '2026-10-31' && $c6['GCAAA01']['visited_ts'] === '2026-10-31T08:00:00Z');
+check('Tour: eigenes Log → erledigt', $c6['GCAAA01']['done'] === true && $c6['GCAAA02']['done'] === true && $c6['GCAAA03']['done'] === false);
+check('Tour: Fundstatus ohne Uhrzeit → visited_ts leer', $c6['GCAAA02']['visited_ts'] === null && $c6['GCAAA02']['visited_at'] === '2026-10-29');
+
+// Uhrzeit nahe Mitternacht: Datum in Ortszeit (23:30Z am 31.10. = 00:30 MEZ am 1.11.)
+check('localDate: UTC → Europe/Berlin', Db::localDate('2026-10-31T23:30:00Z') === '2026-11-01' && Db::localDate('2026-07-01T21:30:00Z') === '2026-07-01');
+
+// Re-Upload: eigenes Log ergänzt nur Fehlendes (Uhrzeit, erledigt); Status/Datum bleiben
+$pdo6 = $db6->pdo();
+$id6  = (int) $c6['GCAAA01']['id'];
+$pdo6->exec("UPDATE cache_log SET done = 0, visited_ts = NULL, log_type = 'Found it', visited_at = '2026-11-01' WHERE id = $id6");
+$db6->mergeGpx((int) $t6['id'], array_values($p), $pq, false);
+$r6 = array_column($db6->getTour((int) $t6['id'])['caches'], null, 'code')['GCAAA01'];
+check('Re-Upload: Uhrzeit + erledigt ergänzt', $r6['visited_ts'] === '2026-10-31T08:00:00Z' && $r6['done'] === true);
+check('Re-Upload: Status/Datum unverändert', $r6['log_type'] === 'Found it' && $r6['visited_at'] === '2026-11-01');
+$pdo6->exec("UPDATE cache_log SET visited_ts = '2026-10-31T09:15:00Z' WHERE id = $id6");
+$db6->mergeGpx((int) $t6['id'], array_values($p), $pq, false);
+$r6 = array_column($db6->getTour((int) $t6['id'])['caches'], null, 'code')['GCAAA01'];
+check('Re-Upload: vorhandene Uhrzeit bleibt', $r6['visited_ts'] === '2026-10-31T09:15:00Z');
+check('Tour: Begleiter-Log gespeichert', $c6['GCAAA01']['companion_logs'][0]['name'] === 'Clicki17');
+check('Tour: ohne eigenes Log → Tour-Datum', $c6['GCAAA03']['visited_at'] === '2026-11-01' && $c6['GCAAA03']['log_type'] === 'Webcam Photo Taken');
+
+$prompt = Prompts::log('Kontext', $a + ['log_type' => "Didn't find it"], 'Notiz');
+check('Prompt: Owner für Dank + Gelegt von', str_contains($prompt, 'Owner (für den Dank): deichbehren') && str_contains($prompt, 'Gelegt von: deichbehren, DinoSijoru'));
+check('Prompt: Attribute + Favoriten', str_contains($prompt, 'Attribute: nicht: Wheelchair accessible, Recommended for kids') && str_contains($prompt, 'Favoritenpunkte: 42'));
+check('Prompt: DNF-Anweisung', str_contains($prompt, 'NICHT GEFUNDEN (DNF)'));
+check('Prompt: keine GcNote/Logtexte', !str_contains($prompt, 'FINAL') && !str_contains($prompt, 'BEGLEITERTEXT'));
+$batch = Prompts::logBatch('K', [$a + ['log_type' => 'Write note'], $p['GCAAA02'] + ['log_type' => 'Attended']]);
+check('Sammel-Prompt: Status je Cache', str_contains($batch, 'LOG-STATUS: NOTIZ') && str_contains($batch, 'LOG-STATUS: EVENT BESUCHT'));
+check('Prompt: Fund ist Normalfall', str_contains(Prompts::log('K', ['name' => 'X'], ''), 'LOG-STATUS: GEFUNDEN.'));
+
+// ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";
 exit($fails === 0 ? 0 : 1);

@@ -550,10 +550,25 @@ function renderMeta(c) {
   if (c.difficulty) parts.push(meta('D', c.difficulty));
   if (c.terrain)    parts.push(meta('T', c.terrain));
   if (c.container)  parts.push(meta('Behälter', c.container));
-  if (c.placed_by)  parts.push(meta('Owner', c.placed_by));
+  const owner = c.owner || c.placed_by;
+  if (owner)        parts.push(meta('Owner', owner));
+  if (c.placed_by && c.placed_by.toLowerCase() !== (owner || '').toLowerCase()) parts.push(meta('Gelegt von', c.placed_by));
+  if (c.fav_points != null) parts.push(meta('Favoriten', '★ ' + c.fav_points));
   if (c.country)    parts.push(meta('Land', c.country + (c.state ? ' (' + c.state + ')' : '')));
   if (c.code)       parts.push(meta('Code', c.code));
   let html = parts.join('');
+  if (c.attributes && c.attributes.length) {
+    html += '<div class="attrs">' + c.attributes.map((a) => '<span class="attr">' + escapeHtml(a) + '</span>').join('') + '</div>';
+  }
+  if (c.own_log) {
+    const when = c.own_log.ts ? formatLocalDateTime(c.own_log.ts) : formatDate(c.own_log.date);
+    html += '<div class="own-log">✍️ Du hast bereits geloggt (' + escapeHtml(c.own_log.type)
+      + (when ? ', ' + escapeHtml(when) : '') + ')</div>';
+  }
+  (c.companion_logs || []).forEach((l) => {
+    html += '<div class="companion-log">👥 ' + escapeHtml(l.name) + ' hat schon geloggt (' + escapeHtml(l.type)
+      + (l.date ? ', ' + formatDate(l.date) : '') + ')</div>';
+  });
   if (c.hint) html += '<div class="hint">Hinweis: ' + escapeHtml(c.hint) + '</div>';
   return html;
 }
@@ -779,6 +794,15 @@ if (window.GC_DEBUG) {
 }
 
 /* ---------- Utility ---------- */
+
+// UTC-ISO → 'TT.MM.JJJJ HH:MM' in Ortszeit (Europe/Berlin)
+function formatLocalDateTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString('de-DE', {
+    timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).replace(',', '');
+}
 
 // 'YYYY-MM-DD' → 'TT.MM.JJJJ'
 function formatDate(d) {

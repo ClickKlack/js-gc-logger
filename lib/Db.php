@@ -161,10 +161,23 @@ final class Db
         }
     }
 
+    /** UTC-ISO-Zeitpunkt → Datum in Ortszeit (YYYY-MM-DD). */
+    public static function localDate(string $utcIso): string
+    {
+        return (new DateTimeImmutable($utcIso, new DateTimeZone('UTC')))
+            ->setTimezone(new DateTimeZone('Europe/Berlin'))->format('Y-m-d');
+    }
+
     /** Heutiges Datum in Ortszeit (Tour-/Besuchsdatum). */
     public static function today(): string
     {
         return (new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin')))->format('Y-m-d');
+    }
+
+    /** Alle je verwendeten Begleiter (für Erkennung ihrer Logs in der GPX). */
+    public function knownCompanions(): array
+    {
+        return $this->pdo->query('SELECT DISTINCT name FROM tour_companion ORDER BY name')->fetchAll(PDO::FETCH_COLUMN);
     }
 
     /** Hält tour_companion synchron zur JSON-Spalte tour.companions. */
@@ -185,6 +198,27 @@ final class Db
     public const CACHE_FIELDS = ['notes', 'log', 'done', 'log_type', 'visited_at', 'visited_ts'];
     /** Werden sie von Hand gesetzt, überschreibt ein Feldnotizen-Import sie nicht mehr. */
     public const MANUAL_FIELDS = ['log_type', 'visited_at', 'visited_ts'];
+
+    /** Log-Typen in geocaching.com-Schreibweise (Export, Feldnotizen). */
+    public const LOG_TYPES = ['Found it', "Didn't find it", 'Write note', 'Attended', 'Will Attend', 'Webcam Photo Taken'];
+
+    /**
+     * Start-Status eines Caches: eigenes Log/Fundstatus aus der GPX, sonst nach
+     * Cache-Typ (Events → Attended, Webcams → Webcam Photo Taken), sonst Found it.
+     * @param array<string,mixed> $c
+     */
+    public static function defaultLogType(array $c): string
+    {
+        $type  = (string) ($c['type'] ?? '');
+        // „Fund" heißt bei Events/Webcams anders (Found it gibt es dort nicht)
+        $found = stripos($type, 'event') !== false ? 'Attended'
+            : (stripos($type, 'webcam') !== false ? 'Webcam Photo Taken' : 'Found it');
+        $own = (string) ($c['own_log']['type'] ?? '');
+        if ($own === 'Found it') {
+            return $found;
+        }
+        return in_array($own, self::LOG_TYPES, true) ? $own : $found;
+    }
 
     /** SHA-256 der sortierten, eindeutigen GC-Codes (robust gegen Neu-Exporte). */
     public static function codesHash(array $codes): string
@@ -303,14 +337,33 @@ final class Db
             $knownCodes = array_flip($known->fetchAll(PDO::FETCH_COLUMN));
 
             $upd = $this->pdo->prepare(
-                "UPDATE cache_log SET gpx = ?, name = ?, updated_at = datetime('now')
+                "UPDATE cache_log SET gpx = ?, name = ?, companion_logs = ?, updated_at = datetime('now')
+                 WHERE tour_id = ? AND upper(code) = ?"
+            );
+            // Eigenes Log ergänzt nur Fehlendes: Uhrzeit (falls leer, nicht manuell) + erledigt.
+            // Status und Datum bleiben beim Re-Upload unangetastet.
+            $updOwn = $this->pdo->prepare(
+                "UPDATE cache_log SET done = 1,
+                        visited_ts = CASE WHEN visited_ts IS NULL AND ? IS NOT NULL
+                                           AND COALESCE(manual_fields, '') NOT LIKE '%visited_ts%'
+                                          THEN ? ELSE visited_ts END
                  WHERE tour_id = ? AND upper(code) = ?"
             );
             $new = [];
             foreach ($caches as $c) {
                 $code = strtoupper(trim((string) ($c['code'] ?? '')));
                 if (isset($knownCodes[$code])) {
-                    $upd->execute([json_encode($c, JSON_UNESCAPED_UNICODE), $c['name'] ?? '', $tourId, $code]);
+                    $upd->execute([
+                        json_encode($c, JSON_UNESCAPED_UNICODE),
+                        $c['name'] ?? '',
+                        json_encode($c['companion_logs'] ?? [], JSON_UNESCAPED_UNICODE),
+                        $tourId,
+                        $code,
+                    ]);
+                    if (!empty($c['own_log'])) {
+                        $ts = $c['own_log']['ts'] ?? null;
+                        $updOwn->execute([$ts, $ts, $tourId, $code]);
+                    }
                 } elseif ($addNew) {
                     $new[] = $c;
                     $knownCodes[$code] = true;
@@ -347,18 +400,27 @@ final class Db
     private function insertCaches(int $tourId, array $caches, string $visitedAt, int $startPos): void
     {
         $ins = $this->pdo->prepare(
-            "INSERT INTO cache_log (tour_id, code, name, gpx, notes, log, done, position, visited_at, updated_at)
-             VALUES (?, ?, ?, ?, '', '', 0, ?, ?, datetime('now'))"
+            "INSERT INTO cache_log (tour_id, code, name, gpx, notes, log, done, position, visited_at,
+                                    visited_ts, log_type, companion_logs, updated_at)
+             VALUES (?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, datetime('now'))"
         );
         $pos = $startPos;
         foreach ($caches as $c) {
+            // Eigenes, bereits abgeschicktes Log: Zeitpunkt übernehmen, als erledigt markieren
+            $own     = $c['own_log'] ?? null;
+            $ownTs   = $own['ts'] ?? null;
+            $ownDate = $ownTs !== null ? self::localDate($ownTs) : (string) ($own['date'] ?? '');
             $ins->execute([
                 $tourId,
                 $c['code'] ?? '',
                 $c['name'] ?? '',
                 json_encode($c, JSON_UNESCAPED_UNICODE),
+                $own !== null ? 1 : 0,
                 $pos++,
-                $visitedAt,
+                preg_match('/^\d{4}-\d{2}-\d{2}$/', $ownDate) ? $ownDate : $visitedAt,
+                $ownTs,
+                self::defaultLogType($c),
+                json_encode($c['companion_logs'] ?? [], JSON_UNESCAPED_UNICODE),
             ]);
         }
     }
@@ -540,6 +602,7 @@ final class Db
             $c['find_no']       = $row['find_no'] !== null ? (int) $row['find_no'] : null;
             $c['manual_fields'] = json_decode((string) ($row['manual_fields'] ?? '[]'), true) ?: [];
             $c['updated_at']    = $row['updated_at'];
+            $c['companion_logs'] = json_decode((string) ($row['companion_logs'] ?? '[]'), true) ?: [];
             $caches[]   = $c;
         }
         $tour['caches'] = $caches;

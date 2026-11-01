@@ -5,13 +5,19 @@ declare(strict_types=1);
 /**
  * Parser für Geocaching-GPX-Dateien (Groundspeak-Extensions).
  * Liefert je Cache ein normalisiertes Array.
+ *
+ * gsak:GcNote (persönliche Cache-Notiz, enthält z. B. Final-Koordinaten) wird
+ * bewusst NIE gelesen. Fremde Logs werden ignoriert — außer dem eigenen
+ * (finder = $gcUsername) und denen bekannter Begleiter (ohne Text).
  */
 final class Gpx
 {
     /**
-     * @return array<int, array<string, string>>
+     * @param string        $gcUsername eigener geocaching.com-Name (erkennt das eigene Log)
+     * @param list<string>  $companions bekannte Begleiter (deren Logs als Info merken)
+     * @return array<int, array<string, mixed>>
      */
-    public static function parse(string $xml): array
+    public static function parse(string $xml, string $gcUsername = '', array $companions = []): array
     {
         if (trim($xml) === '') {
             throw new RuntimeException('Die GPX-Datei ist leer.');
@@ -37,6 +43,20 @@ final class Gpx
         // Hints: In offiziellen geocaching.com-Pocket-Queries sind sie ROT13-
         // codiert. c:geo exportiert sie dagegen bereits im Klartext -> dann darf
         // NICHT dekodiert werden (sonst wird der Hint erst verschlüsselt).
+        $gsakNs = null;
+        foreach ($sx->getNamespaces(true) as $uri) {
+            if (stripos($uri, 'gsak.net') !== false) {
+                $gsakNs = $uri;
+                break;
+            }
+        }
+        $me    = mb_strtolower(trim($gcUsername));
+        $known = [];
+        foreach ($companions as $name) {
+            $known[mb_strtolower(trim((string) $name))] = true;
+        }
+        unset($known['']);
+
         $creator     = strtolower((string) $sx['creator']);
         $decodeHints = strpos($creator, 'c:geo') === false
                     && strpos($creator, 'cgeo') === false;
@@ -50,6 +70,7 @@ final class Gpx
                 'code'              => $code,
                 'name'              => $name !== '' ? $name : $code,
                 'type'              => '',
+                'owner'             => '',
                 'placed_by'         => '',
                 'container'         => '',
                 'difficulty'        => '',
@@ -61,6 +82,10 @@ final class Gpx
                 'state'             => '',
                 'lat'               => (string) $wpt['lat'],
                 'lon'               => (string) $wpt['lon'],
+                'attributes'        => [],
+                'fav_points'        => null,
+                'own_log'           => null,   // {type, date, ts} aus eigenem Log bzw. Fundstatus
+                'companion_logs'    => [],     // [{name, type, date}] bekannter Begleiter
             ];
 
             // Nur echte Caches übernehmen. Kind-Wegpunkte (Stages, Finale,
@@ -80,6 +105,7 @@ final class Gpx
                 $entry['name'] = $cacheName;
             }
             $entry['type']       = trim((string) $cache->type);
+            $entry['owner']      = trim((string) $cache->owner);
             $entry['placed_by']  = trim((string) $cache->placed_by);
             $entry['container']  = trim((string) $cache->container);
             $entry['difficulty'] = trim((string) $cache->difficulty);
@@ -101,6 +127,60 @@ final class Gpx
             }
             $entry['listing'] = mb_substr($long, 0, 8000);
 
+            // Attribute; verneinte (inc="0") als solche kennzeichnen, falls der Text
+            // es nicht schon tut (c:geo: "Nicht rollstuhlgerecht", PQ: "Wheelchair accessible")
+            if (isset($cache->attributes)) {
+                foreach ($cache->attributes->attribute as $attr) {
+                    $text = trim((string) $attr);
+                    if ($text === '') {
+                        continue;
+                    }
+                    if ((string) $attr->attributes()['inc'] === '0' && !preg_match('/^(nicht|kein|no|not)\b/iu', $text)) {
+                        $text = 'nicht: ' . $text;
+                    }
+                    $entry['attributes'][] = $text;
+                }
+            }
+
+            // Logs: nur eigenes (neuestes) und die bekannter Begleiter, nie Texte
+            $ownRaw = '';
+            if (isset($cache->logs)) {
+                foreach ($cache->logs->log as $log) {
+                    $finder = trim((string) $log->finder);
+                    $raw    = trim((string) $log->date);
+                    $info   = ['type' => trim((string) $log->type), 'date' => substr($raw, 0, 10)];
+                    $lc     = mb_strtolower($finder);
+                    if ($me !== '' && $lc === $me) {
+                        if ($entry['own_log'] === null || $raw > $ownRaw) {
+                            $entry['own_log'] = $info + ['ts' => self::utcTimestamp($raw)];
+                            $ownRaw = $raw;
+                        }
+                    } elseif (isset($known[$lc])) {
+                        $entry['companion_logs'][] = ['name' => $finder] + $info;
+                    }
+                }
+            }
+
+            // gsak-Erweiterung: Favoritenpunkte, Fundstatus. GcNote NIE lesen (Spoiler).
+            if ($gsakNs !== null) {
+                $ext = $wpt->children($gsakNs)->wptExtension;
+                if (isset($ext)) {
+                    $fav = trim((string) $ext->FavPoints);
+                    if ($fav !== '' && is_numeric($fav)) {
+                        $entry['fav_points'] = (int) $fav;
+                    }
+                    if ($entry['own_log'] === null) {
+                        $found = substr(trim((string) $ext->UserFound), 0, 10);
+                        $dnf   = substr(trim((string) $ext->DNFDate), 0, 10);
+                        if ($found !== '') {
+                            $entry['own_log'] = ['type' => 'Found it', 'date' => $found, 'ts' => null];
+                        } elseif ($dnf !== '') {
+                            $entry['own_log'] = ['type' => "Didn't find it", 'date' => $dnf, 'ts' => null];
+                        }
+                    }
+                }
+            }
+
             if ($entry['code'] === '' && $entry['name'] === '') {
                 continue; // unbrauchbarer Eintrag
             }
@@ -112,6 +192,24 @@ final class Gpx
         }
 
         return $caches;
+    }
+
+    /**
+     * Log-Zeitpunkt als UTC-ISO (…Z) oder null, wenn er keine echte Uhrzeit trägt
+     * (00:00:00 ist bei vielen Exporten nur Platzhalter für „nur Datum").
+     */
+    private static function utcTimestamp(string $raw): ?string
+    {
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/', $raw)) {
+            return null;
+        }
+        try {
+            $dt = new DateTimeImmutable($raw, new DateTimeZone('UTC'));
+        } catch (Exception) {
+            return null;
+        }
+        $dt = $dt->setTimezone(new DateTimeZone('UTC'));
+        return $dt->format('H:i:s') === '00:00:00' ? null : $dt->format('Y-m-d\TH:i:s\Z');
     }
 
     /**
