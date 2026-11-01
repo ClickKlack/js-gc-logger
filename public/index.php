@@ -19,13 +19,14 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=7">
+    <link rel="stylesheet" href="assets/style.css?v=8">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
 <header class="topbar">
     <h1>🧭 Log-Helfer</h1>
     <?php if ($authed): ?>
+        <span id="save-indicator" class="save-indicator hidden" aria-live="polite"></span>
         <button id="btn-logout" class="link" type="button">Abmelden</button>
     <?php endif; ?>
 </header>
@@ -136,11 +137,11 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             </div>
         </section>
 
-        <!-- Speichern / Touren -->
+        <!-- Touren (gespeichert wird automatisch) -->
         <section id="step-save" class="card hidden">
-            <h2>4 · Speichern &amp; Touren</h2>
+            <h2>4 · Touren</h2>
+            <p class="muted">Alles wird automatisch gespeichert – Status oben rechts.</p>
             <div class="row">
-                <button id="btn-save" class="secondary" type="button">💾 Tour speichern</button>
                 <button id="btn-tours" class="link" type="button">Meine Touren</button>
                 <button id="btn-new" class="link" type="button">Neue Tour</button>
             </div>
@@ -170,6 +171,6 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=7"></script>
+<script src="assets/app.js?v=8"></script>
 </body>
 </html>

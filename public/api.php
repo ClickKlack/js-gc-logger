@@ -255,16 +255,6 @@ try {
             respond(['ok' => true, 'logs' => $logs, 'rejected' => $rejected, 'count' => count($logs)]);
         }
 
-        case 'save': {
-            if (empty($config['store_logs'])) {
-                fail('Speichern ist in der Konfiguration deaktiviert.');
-            }
-            $db      = new Db((string) $config['db_path']);
-            $payload = json_decode((string) ($_POST['tour'] ?? '{}'), true) ?: [];
-            $id      = $db->saveTour($payload);
-            respond(['ok' => true, 'id' => $id]);
-        }
-
         case 'list_tours': {
             if (empty($config['store_logs'])) {
                 respond(['ok' => true, 'tours' => []]);

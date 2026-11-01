@@ -8,7 +8,7 @@ const state = {
   companions: [],
   context: '',
   current: -1,    // Index des aktuell bearbeiteten Caches
-  tourId: null,   // gesetzt nach erstem Speichern
+  tourId: null,   // jede Tour ist gespeichert (create_tour beim GPX-Upload)
 };
 
 /* ---------- kleine Helfer ---------- */
@@ -37,8 +37,216 @@ async function api(action, data = {}, isForm = false) {
     const snippet = raw.trim().slice(0, 200) || '(leere Antwort)';
     throw new Error('Server-Antwort war kein JSON (HTTP ' + res.status + '): ' + snippet);
   }
-  if (!json.ok) throw new Error(json.error || 'Unbekannter Fehler.');
+  if (!json.ok) {
+    const err = new Error(json.error || 'Unbekannter Fehler.');
+    err.status = res.status;
+    throw err;
+  }
   return json;
+}
+
+/* ---------- Autosave: lokal sofort, Server verzögert ---------- */
+
+// Jede Änderung landet sofort als "Edit" im localStorage-Entwurf der Tour
+// (überlebt Reload/Funkloch) und wird nach SAVE_DELAY feldweise an die API
+// geschickt. Bestätigte Edits fliegen aus dem Entwurf.
+//   Schlüssel: 'tour:<feld>' | 'cache:<id>:<feld>' | 'order'
+const SAVE_DELAY = 1500;
+const RETRY_DELAY = 10000;
+const LAST_KEY = 'gc_last';
+const draftKey = (tourId) => 'gc_draft_' + tourId;
+
+const saver = { timer: null, flushing: false, failed: false };
+
+function storageGet(key) {
+  try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; }
+}
+function storageSet(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* voll/privat: nur Server */ }
+}
+function storageDel(key) {
+  try { localStorage.removeItem(key); } catch { /* egal */ }
+}
+
+function loadEdits(tourId) {
+  return (storageGet(draftKey(tourId)) || {}).edits || {};
+}
+function saveEdits(tourId, edits) {
+  if (Object.keys(edits).length) storageSet(draftKey(tourId), { edits });
+  else storageDel(draftKey(tourId));
+}
+
+// Aktuellen Wert eines Edit-Schlüssels aus dem State lesen
+function editValue(key) {
+  if (key === 'order') return state.caches.map((c) => c.id);
+  const [kind, a, b] = key.split(':');
+  if (kind === 'tour') {
+    return { tour_info: state.tourInfo, companions: state.companions, context: state.context }[a];
+  }
+  const c = state.caches.find((x) => String(x.id) === a);
+  return c ? c[b] : undefined;
+}
+
+function markTour(field) { markEdit('tour:' + field); }
+function markCache(c, field) { if (c && c.id) markEdit('cache:' + c.id + ':' + field); }
+function markOrder() { markEdit('order'); }
+
+function markEdit(key) {
+  if (!state.tourId || !window.GC_STORE) return;
+  const edits = loadEdits(state.tourId);
+  edits[key] = { v: editValue(key), ts: Date.now() };
+  saveEdits(state.tourId, edits);
+  clearTimeout(saver.timer);
+  saver.timer = setTimeout(flushEdits, SAVE_DELAY);
+  renderSaveIndicator();
+}
+
+// Edits zu API-Aufrufen bündeln: je Cache ein update_cache, ein update_tour, ein reorder
+function editRequests(edits) {
+  const tourFields = {};
+  const cacheFields = {};
+  const reqs = [];
+  for (const [key, e] of Object.entries(edits)) {
+    if (key === 'order') {
+      reqs.push({ keys: [key], action: 'reorder', data: { tour_id: String(state.tourId), ids: JSON.stringify(e.v) } });
+      continue;
+    }
+    const [kind, a, b] = key.split(':');
+    if (kind === 'tour') tourFields[a] = e.v;
+    else (cacheFields[a] ||= {})[b] = e.v;
+  }
+  if (Object.keys(tourFields).length) {
+    reqs.push({
+      keys: Object.keys(tourFields).map((f) => 'tour:' + f),
+      action: 'update_tour',
+      data: { id: String(state.tourId), fields: JSON.stringify(tourFields) },
+    });
+  }
+  for (const [id, fields] of Object.entries(cacheFields)) {
+    reqs.push({
+      keys: Object.keys(fields).map((f) => 'cache:' + id + ':' + f),
+      action: 'update_cache',
+      data: { id, fields: JSON.stringify(fields) },
+    });
+  }
+  return reqs;
+}
+
+async function flushEdits() {
+  clearTimeout(saver.timer);
+  saver.timer = null;
+  if (!state.tourId || saver.flushing) return;
+  const tourId = state.tourId;
+  const sent = loadEdits(tourId);
+  if (!Object.keys(sent).length) { saver.failed = false; renderSaveIndicator(); return; }
+
+  saver.flushing = true;
+  renderSaveIndicator();
+  let failed = false;
+  for (const req of editRequests(sent)) {
+    try {
+      await api(req.action, req.data);
+      dropEdits(tourId, req.keys, sent);
+    } catch (ex) {
+      if (ex.status === 404 || ex.status === 400) {
+        dropEdits(tourId, req.keys, sent);   // Ziel gelöscht/ungültig: nicht endlos wiederholen
+      } else {
+        failed = true;                         // Netz weg, 401, 5xx: lokal behalten
+        saver.error = ex.status === 401 ? 'abgemeldet' : 'offline';
+      }
+    }
+  }
+  saver.flushing = false;
+  saver.failed = failed;
+  const rest = loadEdits(tourId);
+  if (Object.keys(rest).length && !saver.timer) {
+    saver.timer = setTimeout(flushEdits, failed ? RETRY_DELAY : SAVE_DELAY);
+  }
+  renderSaveIndicator();
+}
+
+// Nur Edits entfernen, die seit dem Senden nicht erneut geändert wurden
+function dropEdits(tourId, keys, sent) {
+  const edits = loadEdits(tourId);
+  keys.forEach((k) => { if (edits[k] && edits[k].ts === sent[k].ts) delete edits[k]; });
+  saveEdits(tourId, edits);
+}
+
+// Beim Verlassen/Verstecken der Seite: per sendBeacon losschicken (kein Ergebnis;
+// der Entwurf bleibt bis zur nächsten Bestätigung erhalten, Wiederholen ist harmlos).
+function beaconEdits() {
+  if (!state.tourId || !navigator.sendBeacon) return;
+  for (const req of editRequests(loadEdits(state.tourId))) {
+    const fd = new FormData();
+    fd.append('action', req.action);
+    for (const [k, v] of Object.entries(req.data)) fd.append(k, v);
+    navigator.sendBeacon('api.php', fd);
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') beaconEdits();
+  else flushEdits();
+});
+window.addEventListener('pagehide', beaconEdits);
+window.addEventListener('online', flushEdits);
+
+function renderSaveIndicator() {
+  const el = $('#save-indicator');
+  if (!el) return;
+  if (!state.tourId || !window.GC_STORE) { hide(el); return; }
+  const pending = Object.keys(loadEdits(state.tourId)).length > 0;
+  el.classList.toggle('warn', pending && saver.failed);
+  if (!pending) el.textContent = '✓ gespeichert';
+  else if (saver.failed) el.textContent = saver.error === 'abgemeldet' ? '⚠ abgemeldet, lokal gesichert' : '⚠ offline, lokal gesichert';
+  else el.textContent = '⏳ speichert…';
+  show(el);
+}
+
+// Position merken, damit ein Reload an derselben Stelle landet
+function rememberPosition() {
+  if (!state.tourId) return;
+  const c = state.caches[state.current];
+  storageSet(LAST_KEY, { tourId: state.tourId, cacheId: c ? c.id : null });
+}
+
+// Server-Zeit 'YYYY-MM-DD HH:MM:SS' (UTC) → ms
+function serverTime(s) {
+  return s ? Date.parse(String(s).replace(' ', 'T') + 'Z') || 0 : 0;
+}
+
+// Lokale, noch nicht bestätigte Edits über den Server-Stand legen — nur wenn sie
+// neuer sind als die letzte Server-Änderung der Zeile (sonst gewinnt der Server,
+// z. B. weil auf einem anderen Gerät weitergearbeitet wurde).
+function applyLocalEdits(tour) {
+  const edits = loadEdits(tour.id);
+  const keep = {};
+  for (const [key, e] of Object.entries(edits)) {
+    if (key === 'order') {
+      if (e.ts > serverTime(tour.updated_at)) {
+        const byId = new Map(state.caches.map((c) => [c.id, c]));
+        if (e.v.length === byId.size && e.v.every((id) => byId.has(id))) {
+          state.caches = e.v.map((id) => byId.get(id));
+          keep[key] = e;
+        }
+      }
+      continue;
+    }
+    const [kind, a, b] = key.split(':');
+    if (kind === 'tour') {
+      if (e.ts > serverTime(tour.updated_at)) {
+        if (a === 'tour_info') state.tourInfo = e.v;
+        if (a === 'companions') state.companions = e.v;
+        if (a === 'context') state.context = e.v;
+        keep[key] = e;
+      }
+    } else {
+      const c = state.caches.find((x) => String(x.id) === a);
+      if (c && e.ts > serverTime(c.updated_at)) { c[b] = e.v; keep[key] = e; }
+    }
+  }
+  saveEdits(tour.id, keep);
+  return Object.keys(keep).length;
 }
 
 /* ---------- Login ---------- */
@@ -72,20 +280,89 @@ $('#gpx-file')?.addEventListener('change', async (e) => {
   try {
     const fd = new FormData();
     fd.append('gpx', file);
-    const { caches } = await api('upload_gpx', fd, true);
-    state.caches = caches.map((c) => ({ ...c, notes: '', log: '', done: false }));
-    state.current = -1;
-    state.tourId = null;
-    status.textContent = caches.length + ' Cache(s) geladen.';
-    $('#btn-context').disabled = false;
-    renderCacheList();
+    const { caches, match } = await api('upload_gpx', fd, true);
+
+    if (!window.GC_STORE) {
+      // Ohne Speicherung: nur im Browser arbeiten
+      state.caches = caches.map((c) => ({ ...c, notes: '', log: '', done: false }));
+      state.current = -1;
+      status.textContent = caches.length + ' Cache(s) geladen.';
+      $('#btn-context').disabled = false;
+      renderCacheList();
+      return;
+    }
+
+    // Bekannte Tour? (Wiedererkennung über GC-Codes)
+    let mode = 'new';
+    const label = match && match.tour_id
+      ? 'Tour #' + match.tour_id + ' „' + (match.title || 'Tour') + '“ vom ' + formatDate(match.tour_date) : '';
+    if (match && match.type === 'exact') {
+      mode = confirm('Diese Caches sind bereits in ' + label + '.\n\n'
+        + 'OK = diese Tour öffnen (GPX-Daten wie Land werden aufgefrischt, Notizen/Logs bleiben)\n'
+        + 'Abbrechen = trotzdem neue Tour anlegen') ? 'refresh' : 'new';
+    } else if (match && match.type === 'partial') {
+      mode = confirm(match.known + ' von ' + match.total + ' Caches sind bereits in ' + label + '.\n\n'
+        + 'OK = die ' + (match.total - match.known) + ' neuen Caches zu dieser Tour hinzufügen\n'
+        + 'Abbrechen = neue Tour anlegen') ? 'add' : 'new';
+    }
+
+    status.textContent = mode === 'new' ? 'Lege Tour an …' : 'Öffne Tour …';
+    const fd2 = new FormData();
+    fd2.append('gpx', file);
+    fd2.append('mode', mode);
+    if (mode === 'new') {
+      syncCompanionsFromUI(false);
+      fd2.append('meta', JSON.stringify({ tour_info: $('#tour-info').value, companions: state.companions }));
+    } else {
+      fd2.append('tour_id', String(match.tour_id));
+    }
+    const { tour, added } = await api('create_tour', fd2, true);
+
+    if (mode === 'new') {
+      loadTourIntoState(tour);
+      state.current = -1;
+      rememberPosition();
+      renderCacheList();
+      renderSaveIndicator();
+      $('#btn-context').disabled = false;
+      status.textContent = '✓ Tour #' + tour.id + ' angelegt (' + tour.caches.length + ' Caches) – wird automatisch gespeichert.';
+    } else {
+      status.textContent = '';
+      await openTour(tour.id, { tour });
+      $('#save-status').textContent = mode === 'add'
+        ? '✓ ' + added + ' Cache(s) zu Tour #' + tour.id + ' hinzugefügt.'
+        : '✓ Tour #' + tour.id + ' geöffnet, GPX-Daten aufgefrischt.';
+    }
   } catch (ex) {
     status.textContent = 'Fehler: ' + ex.message;
     $('#btn-context').disabled = true;
+  } finally {
+    e.target.value = '';   // gleiche Datei erneut wählbar
   }
 });
 
 /* ---------- Begleiter einsammeln ---------- */
+
+// Begleiter aus dem Formular in den State übernehmen (und ggf. speichern)
+function syncCompanionsFromUI(mark = true) {
+  const list = collectCompanions();
+  if (JSON.stringify(list) === JSON.stringify(state.companions)) return;
+  state.companions = list;
+  if (mark) markTour('companions');
+}
+
+function setCompanionsUI(list) {
+  const known = new Set();
+  document.querySelectorAll('.companion').forEach((cb) => {
+    cb.checked = list.includes(cb.value);
+    if (cb.checked) known.add(cb.value);
+  });
+  $('#companions-extra').value = list.filter((n) => !known.has(n)).join(', ');
+}
+
+document.querySelectorAll('.companion').forEach((cb) => cb.addEventListener('change', () => syncCompanionsFromUI()));
+$('#companions-extra')?.addEventListener('input', () => syncCompanionsFromUI());
+$('#tour-info')?.addEventListener('input', (e) => { state.tourInfo = e.target.value; markTour('tour_info'); });
 
 function collectCompanions() {
   const list = [];
@@ -102,7 +379,7 @@ function collectCompanions() {
 $('#btn-context')?.addEventListener('click', async () => {
   const status = $('#context-status');
   state.tourInfo = $('#tour-info').value;
-  state.companions = collectCompanions();
+  syncCompanionsFromUI();
   status.textContent = 'Erzeuge Tour-Kontext …';
   $('#btn-context').disabled = true;
   try {
@@ -113,6 +390,7 @@ $('#btn-context')?.addEventListener('click', async () => {
       caches: JSON.stringify(overview),
     });
     state.context = context;
+    markTour('context');
     $('#context-text').value = context;
     show($('#step-context'));
     show($('#step-caches'));
@@ -127,7 +405,7 @@ $('#btn-context')?.addEventListener('click', async () => {
   }
 });
 
-$('#context-text')?.addEventListener('input', (e) => { state.context = e.target.value; });
+$('#context-text')?.addEventListener('input', (e) => { state.context = e.target.value; markTour('context'); });
 
 /* ---------- Sammel-Modus: offene Logs in wenigen Sammel-Anfragen ---------- */
 
@@ -177,7 +455,7 @@ $('#btn-generate-all')?.addEventListener('click', async () => {
         });
         chunk.forEach((c) => {
           // nur übernehmen, falls zwischenzeitlich nicht manuell befüllt
-          if (logs[c.code] != null && !(c.log || '').trim()) { c.log = logs[c.code]; applied++; }
+          if (logs[c.code] != null && !(c.log || '').trim()) { c.log = logs[c.code]; markCache(c, 'log'); applied++; }
           else if (!(c.log || '').trim()) missing.push(c.code);
         });
       } catch (ex) {
@@ -235,6 +513,7 @@ function moveCache(i, delta) {
   // aktuell ausgewählten Cache mitführen
   if (state.current === i) state.current = j;
   else if (state.current === j) state.current = i;
+  markOrder();
   renderCacheList();
 }
 
@@ -261,6 +540,7 @@ function selectCache(i) {
   $('#log-text').value = c.log || '';
   $('#log-status').textContent = '';
   show($('#cache-detail'));
+  rememberPosition();
   renderCacheList();
 }
 
@@ -283,7 +563,10 @@ function meta(label, val) {
 }
 
 $('#cache-notes')?.addEventListener('input', (e) => {
-  if (state.current >= 0) state.caches[state.current].notes = e.target.value;
+  if (state.current >= 0) {
+    state.caches[state.current].notes = e.target.value;
+    markCache(state.caches[state.current], 'notes');
+  }
 });
 
 /* ---------- Log generieren / kopieren / weiter ---------- */
@@ -302,6 +585,7 @@ $('#btn-log')?.addEventListener('click', async () => {
       companions: JSON.stringify(state.companions),
     });
     c.log = log;
+    markCache(c, 'log');
     $('#log-text').value = log;
     status.textContent = 'Fertig – bei Bedarf anpassen, dann kopieren.';
   } catch (ex) {
@@ -312,7 +596,10 @@ $('#btn-log')?.addEventListener('click', async () => {
 });
 
 $('#log-text')?.addEventListener('input', (e) => {
-  if (state.current >= 0) state.caches[state.current].log = e.target.value;
+  if (state.current >= 0) {
+    state.caches[state.current].log = e.target.value;
+    markCache(state.caches[state.current], 'log');
+  }
 });
 
 $('#btn-copy')?.addEventListener('click', async () => {
@@ -333,8 +620,9 @@ $('#btn-copy')?.addEventListener('click', async () => {
 });
 
 $('#btn-next')?.addEventListener('click', () => {
-  if (state.current >= 0) {
+  if (state.current >= 0 && !state.caches[state.current].done) {
     state.caches[state.current].done = true;
+    markCache(state.caches[state.current], 'done');
   }
   updateProgress();
   selectCache(nextOpenIndex(state.current));
@@ -351,27 +639,7 @@ function nextOpenIndex(from) {
   return -1;
 }
 
-/* ---------- Schritt 4: Speichern & Touren ---------- */
-
-$('#btn-save')?.addEventListener('click', async () => {
-  const status = $('#save-status');
-  status.textContent = 'Speichere …';
-  try {
-    const payload = {
-      id: state.tourId,
-      title: state.caches.length ? (state.caches[0].name + ' …') : 'Tour',
-      tour_info: state.tourInfo,
-      companions: state.companions,
-      context: state.context,
-      caches: state.caches,
-    };
-    const { id } = await api('save', { tour: JSON.stringify(payload) });
-    state.tourId = id;
-    status.textContent = '✓ Gespeichert (Tour #' + id + ').';
-  } catch (ex) {
-    status.textContent = 'Fehler: ' + ex.message;
-  }
-});
+/* ---------- Schritt 4: Touren ---------- */
 
 async function fetchAndRenderTours(ul, statusEl) {
   if (statusEl) statusEl.textContent = 'Lade Touren …';
@@ -418,34 +686,73 @@ async function fetchAndRenderTours(ul, statusEl) {
 $('#btn-load-tours')?.addEventListener('click', () => fetchAndRenderTours($('#tour-list-top'), $('#load-status')));
 $('#btn-tours')?.addEventListener('click', () => fetchAndRenderTours($('#tour-list'), $('#save-status')));
 
-async function openTour(id) {
+function loadTourIntoState(tour) {
+  if (state.tourId && state.tourId !== tour.id) flushEdits();   // offene Edits der alten Tour noch senden
+  state.tourId = tour.id;
+  state.tourInfo = tour.tour_info || '';
+  state.companions = tour.companions || [];
+  state.context = tour.context || '';
+  state.caches = (tour.caches || []).map((c) => ({
+    ...c, notes: c.notes || '', log: c.log || '', done: !!c.done,
+  }));
+  $('#tour-info').value = state.tourInfo;
+  setCompanionsUI(state.companions);
+  $('#context-text').value = state.context;
+}
+
+// opts.tour: bereits geladene Tour; opts.cacheId: diesen Cache auswählen
+async function openTour(id, opts = {}) {
   try {
-    const { tour } = await api('get_tour', { id: String(id) });
-    state.tourId = tour.id;
-    state.tourInfo = tour.tour_info || '';
-    state.companions = tour.companions || [];
-    state.context = tour.context || '';
-    state.caches = (tour.caches || []).map((c) => ({
-      ...c, notes: c.notes || '', log: c.log || '', done: !!c.done,
-    }));
+    const tour = opts.tour || (await api('get_tour', { id: String(id) })).tour;
+    loadTourIntoState(tour);
+    const restored = applyLocalEdits(tour);
     $('#tour-info').value = state.tourInfo;
+    setCompanionsUI(state.companions);
     $('#context-text').value = state.context;
-    // Start-Boxen ausblenden, Bearbeitungsschritte zeigen
-    hide($('#step-setup'));
+
     const sl = $('#step-load'); if (sl) hide(sl);
-    show($('#step-context'));
-    show($('#step-caches'));
-    show($('#step-save'));
     hide($('#tour-list'));
     hide($('#tour-list-top'));
-    selectCache(nextOpenIndex(-1) === -1 ? 0 : nextOpenIndex(-1));
-    $('#save-status').textContent = 'Tour #' + id + ' geladen.';
+    if (state.context.trim()) {
+      // Kontext steht schon: direkt zu den Caches
+      hide($('#step-setup'));
+      show($('#step-context'));
+      show($('#step-caches'));
+      show($('#step-save'));
+      let idx = state.caches.findIndex((c) => opts.cacheId != null && c.id === opts.cacheId);
+      if (idx < 0) idx = nextOpenIndex(-1) === -1 ? 0 : nextOpenIndex(-1);
+      selectCache(idx);
+    } else {
+      // Tour noch in der Einrichtung (vor „Kontext erzeugen")
+      show($('#step-setup'));
+      $('#btn-context').disabled = false;
+      $('#gpx-status').textContent = 'Tour #' + tour.id + ' (' + state.caches.length + ' Caches) – Tour-Infos ergänzen, dann Kontext erzeugen.';
+      state.current = -1;
+      rememberPosition();
+      renderCacheList();
+    }
+    $('#save-status').textContent = 'Tour #' + tour.id + ' geladen.'
+      + (restored ? ' ' + restored + ' lokal gesicherte Änderung(en) wiederhergestellt.' : '');
+    renderSaveIndicator();
+    if (restored) flushEdits();
   } catch (ex) {
+    if (ex.status === 404) storageDel(LAST_KEY);
     $('#save-status').textContent = 'Fehler: ' + ex.message;
+    $('#load-status') && ($('#load-status').textContent = 'Fehler: ' + ex.message);
   }
 }
 
-$('#btn-new')?.addEventListener('click', () => location.reload());
+$('#btn-new')?.addEventListener('click', async () => {
+  await flushEdits();
+  storageDel(LAST_KEY);
+  location.reload();
+});
+
+// Beim Start an der letzten Stelle weitermachen
+if (document.body.dataset.authed === '1' && window.GC_STORE) {
+  const last = storageGet(LAST_KEY);
+  if (last && last.tourId) openTour(last.tourId, { cacheId: last.cacheId });
+}
 
 /* ---------- Debug (nur wenn in config.php aktiviert) ---------- */
 
@@ -472,6 +779,12 @@ if (window.GC_DEBUG) {
 }
 
 /* ---------- Utility ---------- */
+
+// 'YYYY-MM-DD' → 'TT.MM.JJJJ'
+function formatDate(d) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || '');
+  return m ? m[3] + '.' + m[2] + '.' + m[1] : (d || '');
+}
 
 function escapeHtml(s) {
   return String(s)

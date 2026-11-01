@@ -126,24 +126,17 @@ if ($dbPath === null) {
     $bk = new PDO('sqlite:' . end($left));
     check('Backup lesbar + vollständig', (int) $bk->query('SELECT COUNT(*) FROM tour')->fetchColumn() === $toursBefore);
 
-    // Rundreise über den (Übergangs-)save erhält die neuen Felder
-    $tourId = (int) $db2->pdo()->query('SELECT id FROM tour ORDER BY id DESC LIMIT 1')->fetchColumn();
-    $tour   = $db2->getTour($tourId);
-    $tour['caches'][0]['log_type'] = "Didn't find it";
-    $db2->saveTour($tour);
-    $again = $db2->getTour($tourId);
-    check('save erhält log_type', $again['caches'][0]['log_type'] === "Didn't find it");
-    check('save erhält visited_at', $again['caches'][0]['visited_at'] === $tour['caches'][0]['visited_at']);
 }
 
 // Frische DB (Neuinstallation)
 $fresh = new Db(tmpdir() . '/fresh.sqlite');
 check('frische DB: user_version aktuell', (int) $fresh->pdo()->query('PRAGMA user_version')->fetchColumn() >= 1);
-$id = $fresh->saveTour(['title' => 'T', 'companions' => ['die-steffi'], 'caches' => [['code' => 'GC1', 'name' => 'A']]]);
+$id = $fresh->createTour([['code' => 'GC1', 'name' => 'A']], '<gpx/>', ['companions' => ['die-steffi']]);
 $t  = $fresh->getTour($id);
 check('frische DB: Tour mit Datum + Begleiter', $t['tour_date'] === Db::today() && $t['caches'][0]['visited_at'] === Db::today()
     && (int) $fresh->pdo()->query('SELECT COUNT(*) FROM tour_companion')->fetchColumn() === 1);
-check('frische DB: kein Backup', !is_dir(dirname((string) $fresh->pdo()->query('PRAGMA database_list')->fetch()['file']) . '/backup'));
+check('frische DB: kein Migrations-Backup (nur das vor der Tour-Anlage)',
+    count(glob(dirname((string) $fresh->pdo()->query('PRAGMA database_list')->fetch()['file']) . '/backup/*.sqlite') ?: []) === 1);
 
 // ---------------------------------------------------------------------------
 section('Login: Angemeldet-bleiben-Token (Schritt 3)');

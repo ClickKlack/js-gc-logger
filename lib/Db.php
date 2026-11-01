@@ -495,66 +495,6 @@ final class Db
         return $v === false ? null : (string) $v;
     }
 
-    /**
-     * Speichert eine Tour inkl. Caches. Vorhandene id => Update, sonst Insert.
-     * @param array<string,mixed> $t
-     */
-    public function saveTour(array $t): int
-    {
-        $this->pdo->beginTransaction();
-        try {
-            $companions = json_encode($t['companions'] ?? [], JSON_UNESCAPED_UNICODE);
-
-            if (!empty($t['id'])) {
-                $id = (int) $t['id'];
-                $stmt = $this->pdo->prepare(
-                    "UPDATE tour SET title = ?, tour_info = ?, companions = ?, context = ?, updated_at = datetime('now') WHERE id = ?"
-                );
-                $stmt->execute([$t['title'] ?? null, $t['tour_info'] ?? '', $companions, $t['context'] ?? '', $id]);
-                $this->pdo->prepare('DELETE FROM cache_log WHERE tour_id = ?')->execute([$id]);
-            } else {
-                $stmt = $this->pdo->prepare(
-                    "INSERT INTO tour (title, tour_info, companions, context, tour_date, updated_at)
-                     VALUES (?, ?, ?, ?, ?, datetime('now'))"
-                );
-                $stmt->execute([$t['title'] ?? null, $t['tour_info'] ?? '', $companions, $t['context'] ?? '', self::today()]);
-                $id = (int) $this->pdo->lastInsertId();
-            }
-            $this->syncCompanions($id, $t['companions'] ?? []);
-            $tourDate = (string) $this->pdo->query('SELECT tour_date FROM tour WHERE id = ' . $id)->fetchColumn();
-
-            $ins = $this->pdo->prepare(
-                "INSERT INTO cache_log (tour_id, code, name, gpx, notes, log, done, position,
-                                        log_type, visited_at, visited_ts, find_no, manual_fields, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
-            );
-            $pos = 0;
-            foreach (($t['caches'] ?? []) as $c) {
-                $ins->execute([
-                    $id,
-                    $c['code'] ?? '',
-                    $c['name'] ?? '',
-                    json_encode($c, JSON_UNESCAPED_UNICODE),
-                    $c['notes'] ?? '',
-                    $c['log'] ?? '',
-                    !empty($c['done']) ? 1 : 0,
-                    $pos++,
-                    ($c['log_type'] ?? '') !== '' ? $c['log_type'] : 'Found it',
-                    ($c['visited_at'] ?? '') !== '' ? $c['visited_at'] : $tourDate,
-                    $c['visited_ts'] ?? null,
-                    $c['find_no'] ?? null,
-                    json_encode($c['manual_fields'] ?? []),
-                ]);
-            }
-
-            $this->pdo->commit();
-            return $id;
-        } catch (Throwable $e) {
-            $this->pdo->rollBack();
-            throw $e;
-        }
-    }
-
     /** @return array<int, array<string,mixed>> */
     public function listTours(): array
     {
