@@ -19,7 +19,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=13">
+    <link rel="stylesheet" href="assets/style.css?v=16">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -73,6 +73,12 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             </label>
             <p id="gpx-status" class="muted"></p>
 
+            <label class="filelabel">
+                c:geo-Feldnotizen (optional, geocache_visits.txt)
+                <input type="file" class="fieldnotes-file" accept=".txt,text/plain">
+            </label>
+            <p class="muted fieldnotes-status">Status, Uhrzeit, Fundnummer und Reihenfolge aus c:geo – auch später in der Tour möglich.</p>
+
             <label>Tour-Datum
                 <input type="date" class="tour-date" id="tour-date">
             </label>
@@ -113,9 +119,17 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
 
         <!-- Schritt 3: Caches abarbeiten -->
         <section id="step-caches" class="card hidden">
-            <h2>3 · Caches <span id="progress" class="badge"></span></h2>
+            <h2 class="h2-row">3 · Caches <span id="progress" class="badge"></span>
+                <button id="btn-sort-time" class="ghost icon-btn" type="button" title="Nach Fundzeit sortieren" aria-label="Nach Fundzeit sortieren">⏱</button>
+            </h2>
 
             <ul id="cache-list" class="cache-list"></ul>
+
+            <label class="filelabel">
+                📝 c:geo-Feldnotizen importieren
+                <input type="file" class="fieldnotes-file" accept=".txt,text/plain">
+            </label>
+            <p class="muted fieldnotes-status">Übernimmt Status, Uhrzeit und Fundnummer (von Hand gesetzte Werte bleiben) und sortiert nach Fundzeit.</p>
 
             <div class="row">
                 <button id="btn-generate-all" class="primary" type="button">✨ Offene Logs generieren</button>
@@ -195,6 +209,6 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=14"></script>
+<script src="assets/app.js?v=18"></script>
 </body>
 </html>

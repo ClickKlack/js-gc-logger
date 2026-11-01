@@ -178,6 +178,42 @@ try {
             respond(['ok' => true, 'tour' => $db->getTour($id), 'added' => $added]);
         }
 
+        case 'upload_fieldnotes': {
+            // c:geo-Feldnotizen in eine Tour übernehmen; sortiert direkt, wenn die Tour
+            // noch nicht von Hand umsortiert wurde, sonst Rückfrage (needs_confirm).
+            $db     = storage_db($config);
+            $tourId = (int) ($_POST['tour_id'] ?? 0);
+            $tour   = $db->getTour($tourId);
+            if ($tour === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            if (!isset($_FILES['fieldnotes']) || $_FILES['fieldnotes']['error'] !== UPLOAD_ERR_OK) {
+                fail('Keine Feldnotizen-Datei empfangen.');
+            }
+            try {
+                $entries = FieldNotes::parse((string) file_get_contents($_FILES['fieldnotes']['tmp_name']));
+            } catch (RuntimeException $e) {
+                fail($e->getMessage());
+            }
+            $stats  = $db->applyFieldNotes($tourId, $entries);
+            $sorted = false;
+            if (!$tour['manually_sorted'] && $stats['matched'] > 0) {
+                $db->sortByTime($tourId);
+                $sorted = true;
+            }
+            respond(['ok' => true, 'tour' => $db->getTour($tourId), 'stats' => $stats, 'sorted' => $sorted,
+                     'needs_confirm' => !$sorted && $stats['matched'] > 0]);
+        }
+
+        case 'sort_by_time': {
+            $db     = storage_db($config);
+            $tourId = (int) ($_POST['tour_id'] ?? 0);
+            if ($db->sortByTime($tourId) === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            respond(['ok' => true, 'tour' => $db->getTour($tourId)]);
+        }
+
         case 'update_tour': {
             $db = storage_db($config);
             try {

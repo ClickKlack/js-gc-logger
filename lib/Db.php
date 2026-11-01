@@ -134,6 +134,11 @@ final class Db
                             OR lower(json_extract(gpx, '$.type')) LIKE '%webcam%')"
                 );
             },
+            // 4: c:geo-Feldnotizen (Import-Zeitpunkt je Tour, Eintrag je Cache)
+            function (): void {
+                $this->addColumnIfMissing('tour', 'fieldnotes_at', 'TEXT');
+                $this->addColumnIfMissing('cache_log', 'fieldnote_ts', 'TEXT');
+            },
         ];
     }
 
@@ -597,6 +602,105 @@ final class Db
         return $this->tourUpdatedAt($tourId);
     }
 
+    /**
+     * c:geo-Feldnotizen übernehmen: je Cache Status, Datum, Uhrzeit (außer von Hand
+     * gesetzte Felder) und Fundnummer. Notizen/Logs bleiben unberührt.
+     * @param list<array{code:string, ts:string, log_type:string, find_no:?int}> $entries
+     * @return array{matched:int, unknown:list<string>, missing:int, kept_manual:int}
+     */
+    public function applyFieldNotes(int $tourId, array $entries): array
+    {
+        $byCode = [];
+        foreach ($entries as $e) {
+            $byCode[strtoupper($e['code'])] = $e;
+        }
+
+        $stmt = $this->pdo->prepare('SELECT id, upper(code) AS code, manual_fields FROM cache_log WHERE tour_id = ?');
+        $stmt->execute([$tourId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $matched    = 0;
+        $keptManual = 0;
+        $seen       = [];
+        $this->pdo->beginTransaction();
+        try {
+            foreach ($rows as $row) {
+                $e = $byCode[$row['code']] ?? null;
+                if ($e === null) {
+                    continue;
+                }
+                $seen[$row['code']] = true;
+                $matched++;
+                $manual = json_decode((string) ($row['manual_fields'] ?? '[]'), true) ?: [];
+
+                $sets = ["fieldnote_ts = ?", "find_no = ?", "updated_at = datetime('now')"];
+                $vals = [$e['ts'], $e['find_no']];
+                $want = ['visited_ts' => $e['ts'], 'visited_at' => self::localDate($e['ts'])];
+                if (in_array($e['log_type'], self::LOG_TYPES, true)) {
+                    $want['log_type'] = $e['log_type'];
+                }
+                foreach ($want as $field => $value) {
+                    if (in_array($field, $manual, true)) {
+                        $keptManual++;
+                        continue;
+                    }
+                    $sets[] = $field . ' = ?';
+                    $vals[] = $value;
+                }
+                $vals[] = (int) $row['id'];
+                $this->pdo->prepare('UPDATE cache_log SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($vals);
+            }
+            $this->pdo->prepare("UPDATE tour SET fieldnotes_at = datetime('now'), updated_at = datetime('now') WHERE id = ?")
+                ->execute([$tourId]);
+            $this->pdo->commit();
+        } catch (Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+
+        // „ohne Feldnotiz" = auch aus früheren Importen keine (die behalten ihre Daten)
+        $missing = $this->pdo->prepare('SELECT COUNT(*) FROM cache_log WHERE tour_id = ? AND fieldnote_ts IS NULL');
+        $missing->execute([$tourId]);
+
+        return [
+            'matched'     => $matched,
+            'unknown'     => array_values(array_diff(array_keys($byCode), array_keys($seen))),
+            'missing'     => (int) $missing->fetchColumn(),
+            'kept_manual' => $keptManual,
+        ];
+    }
+
+    /**
+     * Nach Fundzeit sortieren: zuerst nach Datum (Mehrtagestouren), innerhalb eines
+     * Tages Caches mit Uhrzeit chronologisch (Gleichstand: Fundnummer), danach die
+     * ohne Uhrzeit in bisheriger Reihenfolge. Quelle der Uhrzeit ist egal
+     * (Feldnotiz, eigenes Log, Handeingabe). Setzt manually_sorted zurück.
+     */
+    public function sortByTime(int $tourId): ?string
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT c.id, COALESCE(c.visited_at, t.tour_date) AS day, c.visited_ts AS ts, c.find_no
+             FROM cache_log c JOIN tour t ON t.id = c.tour_id
+             WHERE c.tour_id = ? ORDER BY c.position'
+        );
+        $stmt->execute([$tourId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if ($rows === []) {
+            return null;
+        }
+        foreach ($rows as $i => &$r) {
+            $r['pos'] = $i;
+        }
+        unset($r);
+        usort($rows, static fn (array $a, array $b): int =>
+            [(string) $a['day'], $a['ts'] === null, (string) $a['ts'], (int) $a['find_no'], $a['pos']]
+            <=> [(string) $b['day'], $b['ts'] === null, (string) $b['ts'], (int) $b['find_no'], $b['pos']]);
+
+        $updatedAt = $this->reorder($tourId, array_map('intval', array_column($rows, 'id')), false);
+        $this->pdo->prepare('UPDATE tour SET manually_sorted = 0 WHERE id = ?')->execute([$tourId]);
+        return $updatedAt;
+    }
+
     private function tourUpdatedAt(int $id): ?string
     {
         $stmt = $this->pdo->prepare('SELECT updated_at FROM tour WHERE id = ?');
@@ -621,7 +725,7 @@ final class Db
     {
         $stmt = $this->pdo->prepare(
             'SELECT id, created_at, title, tour_info, companions, context, updated_at, tour_date,
-                    gpx_hash, codes_hash, manually_sorted, gpx_raw IS NOT NULL AS has_gpx_raw
+                    gpx_hash, codes_hash, manually_sorted, fieldnotes_at, gpx_raw IS NOT NULL AS has_gpx_raw
              FROM tour WHERE id = ?'
         );
         $stmt->execute([$id]);
@@ -651,6 +755,7 @@ final class Db
             $c['manual_fields'] = json_decode((string) ($row['manual_fields'] ?? '[]'), true) ?: [];
             $c['updated_at']    = $row['updated_at'];
             $c['companion_logs'] = json_decode((string) ($row['companion_logs'] ?? '[]'), true) ?: [];
+            $c['fieldnote_ts']   = $row['fieldnote_ts'];
             $caches[]   = $c;
         }
         $tour['caches'] = $caches;

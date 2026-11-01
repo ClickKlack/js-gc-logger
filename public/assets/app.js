@@ -10,6 +10,8 @@ const state = {
   context: '',
   current: -1,    // Index des aktuell bearbeiteten Caches
   tourId: null,   // jede Tour ist gespeichert (create_tour beim GPX-Upload)
+  fieldnotesAt: null,       // Zeitpunkt des letzten Feldnotizen-Imports
+  pendingFieldnotes: null,  // vor dem GPX-Upload gewählte Feldnotizen-Datei
 };
 
 /* ---------- kleine Helfer ---------- */
@@ -337,6 +339,11 @@ $('#gpx-file')?.addEventListener('change', async (e) => {
         ? '✓ ' + added + ' Cache(s) zu Tour #' + tour.id + ' hinzugefügt.'
         : '✓ Tour #' + tour.id + ' geöffnet, GPX-Daten aufgefrischt.';
     }
+    if (state.pendingFieldnotes) {
+      const fnFile = state.pendingFieldnotes;
+      state.pendingFieldnotes = null;
+      await importFieldNotes(fnFile);
+    }
   } catch (ex) {
     status.textContent = 'Fehler: ' + ex.message;
     $('#btn-context').disabled = true;
@@ -344,6 +351,78 @@ $('#gpx-file')?.addEventListener('change', async (e) => {
     e.target.value = '';   // gleiche Datei erneut wählbar
   }
 });
+
+/* ---------- c:geo-Feldnotizen ---------- */
+
+function setFieldnotesStatus(text) {
+  document.querySelectorAll('.fieldnotes-status').forEach((el) => { el.textContent = text; });
+}
+
+document.querySelectorAll('.fieldnotes-file').forEach((inp) => inp.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!state.tourId) {
+    // noch keine Tour: nach dem GPX-Upload übernehmen
+    state.pendingFieldnotes = file;
+    setFieldnotesStatus('„' + file.name + '“ vorgemerkt – wird nach dem GPX-Upload übernommen.');
+    return;
+  }
+  await importFieldNotes(file);
+}));
+
+async function importFieldNotes(file) {
+  setFieldnotesStatus('Lese Feldnotizen …');
+  try {
+    await flushEdits();
+    const fd = new FormData();
+    fd.append('tour_id', String(state.tourId));
+    fd.append('fieldnotes', file);
+    const res = await api('upload_fieldnotes', fd, true);
+    let tour = res.tour;
+    let sorted = res.sorted;
+    if (res.needs_confirm && confirm('Die Reihenfolge wurde von Hand geändert.\n\nJetzt nach Fundzeit neu sortieren?')) {
+      tour = (await api('sort_by_time', { tour_id: String(state.tourId) })).tour;
+      sorted = true;
+    }
+    refreshTour(tour);
+
+    const s = res.stats;
+    const msg = ['✓ ' + s.matched + ' Feldnotiz(en) übernommen'];
+    if (sorted) msg.push('nach Fundzeit sortiert');
+    if (s.missing) msg.push(s.missing + ' Cache(s) ohne Feldnotiz (stehen am Ende)');
+    if (s.kept_manual) msg.push(s.kept_manual + ' von Hand gesetzte(r) Wert(e) behalten');
+    if (s.unknown.length) msg.push('nicht in dieser Tour: ' + s.unknown.join(', '));
+    setFieldnotesStatus(msg.join(' · ') + '.');
+  } catch (ex) {
+    setFieldnotesStatus('Fehler: ' + ex.message);
+  }
+}
+
+// ⏱ Nach Fundzeit sortieren (Datum, Uhrzeit, Fundnummer; ohne Uhrzeit ans Tagesende)
+$('#btn-sort-time')?.addEventListener('click', async () => {
+  if (!state.tourId) return;
+  const btn = $('#btn-sort-time');
+  btn.disabled = true;
+  try {
+    await flushEdits();
+    refreshTour((await api('sort_by_time', { tour_id: String(state.tourId) })).tour);
+    setFieldnotesStatus('✓ Nach Fundzeit sortiert.');
+  } catch (ex) {
+    setFieldnotesStatus('Fehler beim Sortieren: ' + ex.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Server-Stand der offenen Tour übernehmen, ausgewählten Cache beibehalten
+function refreshTour(tour) {
+  const cur = state.caches[state.current];
+  loadTourIntoState(tour);
+  state.current = cur ? state.caches.findIndex((c) => c.id === cur.id) : -1;
+  if (state.current >= 0) selectCache(state.current);
+  else renderCacheList();
+}
 
 /* ---------- Begleiter einsammeln ---------- */
 
@@ -511,7 +590,7 @@ function renderCacheList() {
     li.innerHTML =
       '<button type="button" class="check" aria-label="' + (c.done ? 'als offen markieren' : 'als erledigt markieren')
         + '" title="erledigt umschalten">' + (c.done ? '✓' : '○') + '</button>' +
-      '<span class="cmain"><span class="cname">' + escapeHtml(c.name) + '</span>' +
+      '<span class="cmain"><span class="cname">' + typeIcon(c.type) + escapeHtml(c.name) + '</span>' +
         '<span class="csub">' + cacheSubline(c) + '</span></span>' +
       '<span class="moves">' +
         '<button type="button" class="move" data-dir="up" aria-label="nach oben"' + (i === 0 ? ' disabled' : '') + '>▲</button>' +
@@ -538,19 +617,20 @@ function renderCacheList() {
   updateProgress();
 }
 
-// Unterzeile: Land · Status · Fundnummer/Datum/Uhrzeit · Typ
+// Unterzeile: **Uhrzeit** Datum · Fundnummer · Land · Status (Teile brechen nie in sich um)
 function cacheSubline(c) {
   const parts = [];
+  const date = c.visited_at || state.tourDate;
+  if (c.visited_ts || date) {
+    parts.push((c.visited_ts ? '<b>' + escapeHtml(berlinParts(c.visited_ts).time) + '</b> ' : '')
+      + escapeHtml(date ? formatDate(date).slice(0, 6) : ''));
+  }
+  if (c.find_no) parts.push('#' + escapeHtml(String(c.find_no)));
   const cc = countryCode(c.country);
   if (cc) parts.push('<span class="cc" title="' + escapeHtml(c.country) + '">' + escapeHtml(cc) + '</span>');
   parts.push(statusBadge(c.log_type));
-  const when = [];
-  if (c.find_no) when.push('#' + c.find_no);
-  if (c.visited_at && c.visited_at !== state.tourDate) when.push(formatDate(c.visited_at).slice(0, 6));
-  if (c.visited_ts) when.push(berlinParts(c.visited_ts).time);
-  if (when.length) parts.push(escapeHtml(when.join(' · ')));
-  if (c.type) parts.push(escapeHtml(c.type));
-  return parts.join(' · ');
+  if (state.fieldnotesAt && !c.fieldnote_ts) parts.push('<span class="no-note">⚠ keine Feldnotiz</span>');
+  return parts.map((p) => '<span class="part">' + p + '</span>').join(' · ');
 }
 
 function statusBadge(type) {
@@ -601,6 +681,49 @@ function selectCache(i) {
 }
 
 /* ---------- Log-Status, Datum, Uhrzeit ---------- */
+
+/* Cache-Typ-Symbole: eigene SVGs im Stil von geocaching.com (Farbe + Form),
+   damit sie offline funktionieren. Reihenfolge der Muster ist wichtig (z. B. Mega vor Event). */
+const TYPE_ICONS = [
+  [/mega/i, '#a4235b', 'evt', 'Mega-Event'],
+  [/giga/i, '#6b2a8a', 'evt', 'Giga-Event'],
+  [/cito|trash/i, '#3e8e41', 'cito', 'CITO-Event'],
+  [/community celebration/i, '#d9822b', 'evt', 'Community-Celebration-Event'],
+  [/event/i, '#c8312f', 'evt', 'Event'],
+  [/tradi/i, '#02874d', 'box', 'Traditional'],
+  [/multi/i, '#e5a00d', 'multi', 'Multi'],
+  [/unknown|mystery/i, '#1f5aa6', 'q', 'Mystery'],
+  [/letterbox/i, '#25407a', 'mail', 'Letterbox'],
+  [/earth/i, '#1d7a87', 'globe', 'Earthcache'],
+  [/virtual/i, '#3b8fd4', 'virt', 'Virtual'],
+  [/webcam/i, '#5e6670', 'cam', 'Webcam'],
+  [/wherigo/i, '#2b6cb0', 'w', 'Wherigo'],
+  [/lab/i, '#00a0a0', 'flask', 'Adventure Lab'],
+];
+const ICON_GLYPHS = {
+  box: '<rect x="5" y="8" width="10" height="7" rx="1" fill="#fff"/><rect x="4.5" y="6" width="11" height="3" rx="1" fill="#fff"/>',
+  multi: '<rect x="3.5" y="9" width="7" height="6" rx="1" fill="#fff"/><rect x="9.5" y="5" width="7" height="6" rx="1" fill="#fff" opacity=".85"/>',
+  q: '<path d="M7.3 7.6a2.7 2.7 0 1 1 3.9 2.4c-.8.4-1.2 1-1.2 1.8v.6" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="10" cy="15.2" r="1.2" fill="#fff"/>',
+  mail: '<rect x="4" y="6" width="12" height="9" rx="1" fill="#fff"/><path d="M4.5 6.5 10 11l5.5-4.5" stroke="#25407a" stroke-width="1.4" fill="none"/>',
+  evt: '<rect x="4" y="5.5" width="12" height="10" rx="1.2" fill="#fff"/><rect x="4" y="5.5" width="12" height="3" fill="#fff" opacity=".7"/><circle cx="7.5" cy="11.5" r="1.2" fill="currentColor"/><circle cx="12.5" cy="11.5" r="1.2" fill="currentColor"/>',
+  cito: '<path d="M6 7h8l-1 9H7z" fill="#fff"/><rect x="5" y="5" width="10" height="1.8" rx=".6" fill="#fff"/>',
+  globe: '<circle cx="10" cy="10" r="5.5" fill="none" stroke="#fff" stroke-width="1.5"/><path d="M4.5 10h11M10 4.5c-2.5 3-2.5 8 0 11M10 4.5c2.5 3 2.5 8 0 11" stroke="#fff" stroke-width="1.1" fill="none"/>',
+  virt: '<rect x="5" y="6" width="10" height="9" rx="1" fill="none" stroke="#fff" stroke-width="1.5" stroke-dasharray="2 1.6"/>',
+  cam: '<rect x="4" y="7" width="12" height="8" rx="1.5" fill="#fff"/><circle cx="10" cy="11" r="2.4" fill="#5e6670"/><rect x="7" y="5.5" width="4" height="2" rx=".5" fill="#fff"/>',
+  w: '<path d="M4.5 6.5l1.8 7.5 3.7-5.5 3.7 5.5 1.8-7.5" stroke="#fff" stroke-width="1.8" fill="none" stroke-linejoin="round" stroke-linecap="round"/>',
+  flask: '<path d="M8.5 5h3v3.5l3.5 6.5H5l3.5-6.5z" fill="#fff"/>',
+  other: '<circle cx="10" cy="10" r="3" fill="#fff"/>',
+};
+function typeIcon(type) {
+  const t = type || '';
+  const hit = TYPE_ICONS.find(([re]) => re.test(t)) || [null, '#8a929c', 'other', t || 'Cache'];
+  const [, color, glyph] = hit;
+  const label = t || hit[3];
+  // Tooltip/Screenreader-Text am Wrapper: kein Text im Namen (textContent, Kopieren)
+  return '<span class="type-icon" role="img" aria-label="' + escapeHtml(label) + '" title="' + escapeHtml(label) + '">'
+    + '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" style="color:' + color + '">'
+    + '<rect x="0.5" y="0.5" width="19" height="19" rx="4.5" fill="' + color + '"/>' + ICON_GLYPHS[glyph] + '</svg></span>';
+}
 
 const LOG_TYPE_LABELS = {
   'Found it': 'Fund',
@@ -798,7 +921,9 @@ function closeTour() {
   saver.failed = false;
   if (state.tourId) storageDel(draftKey(state.tourId));
   storageDel(LAST_KEY);
-  Object.assign(state, { caches: [], tourInfo: '', tourDate: todayLocal(), companions: [], context: '', current: -1, tourId: null });
+  Object.assign(state, {
+    caches: [], tourInfo: '', tourDate: todayLocal(), companions: [], context: '', current: -1, tourId: null, fieldnotesAt: null,
+  });
   renderSaveIndicator();
 }
 
@@ -862,6 +987,7 @@ function loadTourIntoState(tour) {
   state.tourId = tour.id;
   state.tourInfo = tour.tour_info || '';
   state.tourDate = tour.tour_date || todayLocal();
+  state.fieldnotesAt = tour.fieldnotes_at || null;
   state.companions = tour.companions || [];
   state.context = tour.context || '';
   state.caches = (tour.caches || []).map((c) => ({

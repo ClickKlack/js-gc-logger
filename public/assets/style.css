@@ -50,8 +50,10 @@ body {
 .topbar h1 { font-size: 18px; margin: 0 auto 0 0; white-space: nowrap; }
 .topbar { gap: 10px; }
 .topbar button { white-space: nowrap; }
-.topbar .icon-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; min-width: 40px;
+.icon-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; min-width: 40px;
   padding: 6px 10px; font-size: 18px; line-height: 1; justify-content: center; }
+.h2-row { display: flex; align-items: center; gap: 8px; }
+.h2-row .icon-btn { margin-left: auto; }
 .topbar .icon-btn .btn-text { font-size: 15px; }
 @media (max-width: 560px) {
   .topbar .icon-btn .btn-text { display: none; }   /* nur Symbole: Platz für Speicheranzeige */
@@ -151,7 +153,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .cache-item.done .check { color: var(--primary); }
 .cache-item .cmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .cache-item .cname { font-weight: 600; }
-.cache-item .csub { font-size: 12px; color: var(--muted); }
+.cache-item .csub { font-size: 13px; color: var(--muted); }
+.cache-item .csub .part { white-space: nowrap; }
+.cache-item .csub b { color: var(--ink); }
+.type-icon { display: inline-block; width: 20px; height: 20px; vertical-align: -4px; margin-right: 6px; }
+.type-icon svg { display: block; }
 .cache-item .check {
   min-height: 36px; min-width: 36px; padding: 0; font-size: 18px; line-height: 1;
   background: transparent; color: var(--ink); border: 1px solid transparent; border-radius: 8px;
@@ -162,6 +168,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .status.s-found { color: var(--primary); }
 .status.s-dnf { color: var(--error); }
 .status.s-other { color: var(--secondary); }
+.no-note { color: var(--error); }
 .visit-row { display: flex; flex-wrap: wrap; gap: 0 10px; }
 .visit-row label { flex: 1 1 120px; margin: 6px 0; }
 .cache-item .moves { display: flex; gap: 4px; }

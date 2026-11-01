@@ -14,7 +14,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $root = dirname(__DIR__);
-foreach (['Auth', 'Gpx', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
+foreach (['Auth', 'Gpx', 'FieldNotes', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
     require $root . '/lib/' . $cls . '.php';
 }
 
@@ -421,6 +421,100 @@ check('gültige Werte gespeichert, manuell gemerkt', $c7['GC7A']['log_type'] ===
     && $c7['GC7A']['done'] === false && in_array('visited_ts', $c7['GC7A']['manual_fields'], true));
 check('Uhrzeit löschbar', $c7['GC7D']['visited_ts'] === null);
 check('createTour: ungültiges Tour-Datum → heute', $db7->getTour($db7->createTour([['code' => 'GC7E', 'name' => 'E']], '<gpx/>', ['tour_date' => 'xx']))['tour_date'] === Db::today());
+
+// ---------------------------------------------------------------------------
+section('c:geo-Feldnotizen (Schritt 8)');
+
+$fn2 = $root . '/spec/20261101130803.txt';
+$gpx8 = $root . '/spec/export-2026-11-01-13-07-47-2 Verlauf.gpx';
+if (!is_file($fn2) || !is_file($gpx8)) {
+    skip('Test-Feldnotizen oder GPX fehlen');
+} else {
+    $raw = (string) file_get_contents($fn2);
+    $e   = FieldNotes::parse($raw);
+    $by  = array_column($e, null, 'code');
+    check('4 Einträge, sortiert nach Zeit', array_column($e, 'code') === ['GC7C18Z', 'GCBPV6W', 'GC7C24G', 'GCBQDDG'],
+        implode(',', array_column($e, 'code')));
+    check('Log-Typen', $by['GC7C18Z']['log_type'] === 'Found it' && $by['GC7C24G']['log_type'] === "Didn't find it"
+        && $by['GCBQDDG']['log_type'] === 'Write note');
+    check('Fundnummern 11578/11579/11580/11580', [$by['GC7C18Z']['find_no'], $by['GCBPV6W']['find_no'], $by['GC7C24G']['find_no'],
+        $by['GCBQDDG']['find_no']] === [11578, 11579, 11580, 11580]);
+    check('Zeitstempel UTC + Ortszeit der Nummernzeile', $by['GCBPV6W']['ts'] === '2026-11-01T11:56:04Z' && $by['GCBPV6W']['local_time'] === '12:56');
+    check('„# " im Cache-Namen keine Fehl-Nummer', $by['GC7C18Z']['find_no'] === 11578);
+
+    // Toleranz: BOM, UTF-8, CRLF, "" im Text, mehrere Einträge je Code
+    $utf8 = mb_convert_encoding($raw, 'UTF-8', 'UTF-16LE');
+    check('UTF-16 LE mit BOM', FieldNotes::parse("\xFF\xFE" . $raw) == $e);
+    check('UTF-16 BE mit BOM', FieldNotes::parse("\xFE\xFF" . mb_convert_encoding($utf8, 'UTF-16BE', 'UTF-8')) == $e);
+    check('UTF-8 ohne BOM, CRLF', FieldNotes::parse(str_replace("\n", "\r\n", $utf8)) == $e);
+    $extra = "GC7C18Z,2026-11-01T10:00:00Z,Didn't find it,\"Er sagte \"\"hallo\"\"\n\n*#11570 . 11:00*\"\n";
+    $e2 = array_column(FieldNotes::parse($extra . $utf8), null, 'code');
+    check('je Code gilt der neueste Eintrag', $e2['GC7C18Z']['log_type'] === 'Found it' && $e2['GC7C18Z']['find_no'] === 11578);
+    $e3 = FieldNotes::parse($extra)[0];
+    check('"" im Text, Trenner „." ohne „Uhr"', $e3['find_no'] === 11570 && $e3['local_time'] === '11:00');
+    $threw = false;
+    try { FieldNotes::parse("kein,csv\n"); } catch (RuntimeException) { $threw = true; }
+    check('Datei ohne Feldnotizen → Fehler', $threw);
+
+    // Anwenden auf Tour aus der passenden GPX (GPX-Reihenfolge ≠ Fundreihenfolge)
+    $xml8 = (string) file_get_contents($gpx8);
+    $db8  = new Db(tmpdir() . '/fn.sqlite');
+    $all8 = array_merge(Gpx::parse($xml8), [['code' => 'GCOHNE1', 'name' => 'ohne Feldnotiz', 'type' => 'Traditional Cache']]);
+    $tid8 = $db8->createTour($all8, $xml8, ['tour_date' => '2026-11-01']);
+    check('GPX-Reihenfolge weicht ab', array_column($db8->getTour($tid8)['caches'], 'code')[0] === 'GC7C24G');
+    $c8 = array_column($db8->getTour($tid8)['caches'], null, 'code');
+    $db8->updateCache($c8['GCBPV6W']['id'], ['log_type' => 'Write note']);      // von Hand gesetzt
+
+    $st = $db8->applyFieldNotes($tid8, FieldNotes::parse($utf8 . "GCFREMD,2026-11-01T09:00:00Z,Found it,\"x\"\n"));
+    check('Statistik: 4 zugeordnet, 1 unbekannt, 1 ohne Notiz, 1 manuell', $st['matched'] === 4 && $st['unknown'] === ['GCFREMD']
+        && $st['missing'] === 1 && $st['kept_manual'] === 1, json_encode($st));
+    $c8 = array_column($db8->getTour($tid8)['caches'], null, 'code');
+    check('Status übernommen (DNF, Notiz)', $c8['GC7C24G']['log_type'] === "Didn't find it" && $c8['GCBQDDG']['log_type'] === 'Write note');
+    check('manueller Status bleibt', $c8['GCBPV6W']['log_type'] === 'Write note');
+    check('Uhrzeit, Datum, Fundnummer', $c8['GC7C18Z']['visited_ts'] === '2026-11-01T11:49:07Z' && $c8['GC7C18Z']['visited_at'] === '2026-11-01'
+        && $c8['GC7C18Z']['find_no'] === 11578 && $c8['GC7C18Z']['fieldnote_ts'] === '2026-11-01T11:49:07Z');
+    check('ohne Feldnotiz: unverändert, markierbar', $c8['GCOHNE1']['fieldnote_ts'] === null && $db8->getTour($tid8)['fieldnotes_at'] !== null);
+
+    $db8->sortByTime($tid8);
+    $order = array_column($db8->getTour($tid8)['caches'], 'code');
+    check('Sortierung nach Zeitstempel, ohne Notiz ans Ende', $order === ['GC7C18Z', 'GCBPV6W', 'GC7C24G', 'GCBQDDG', 'GCOHNE1'], implode(',', $order));
+    check('manually_sorted zurückgesetzt', $db8->getTour($tid8)['manually_sorted'] === false);
+
+    // Mehrtagestour: Uhrzeit aus anderer Quelle (eigenes Log) bzw. nur Datum sortieren mit ein
+    $db8->pdo()->exec("UPDATE cache_log SET visited_at = '2026-10-31', visited_ts = '2026-10-31T14:33:39Z' WHERE tour_id = $tid8 AND code = 'GCOHNE1'");
+    $db8->sortByTime($tid8);
+    $order = array_column($db8->getTour($tid8)['caches'], 'code');
+    check('Uhrzeit ohne Feldnotiz (Vortag) → vorn', $order[0] === 'GCOHNE1', implode(',', $order));
+    $db8->pdo()->exec("UPDATE cache_log SET visited_ts = NULL WHERE tour_id = $tid8 AND code = 'GCOHNE1'");
+    $db8->sortByTime($tid8);
+    $order = array_column($db8->getTour($tid8)['caches'], 'code');
+    check('nur Datum (Vortag) → vor dem Folgetag', $order[0] === 'GCOHNE1', implode(',', $order));
+    $db8->pdo()->exec("UPDATE cache_log SET visited_at = '2026-11-01' WHERE tour_id = $tid8 AND code = 'GCOHNE1'");
+    $db8->sortByTime($tid8);
+    $order = array_column($db8->getTour($tid8)['caches'], 'code');
+    check('ohne Uhrzeit am selben Tag → nach den Caches mit Uhrzeit', end($order) === 'GCOHNE1', implode(',', $order));
+
+    // Gleicher Zeitstempel → Fundnummer entscheidet; manuelle Uhrzeit zählt
+    $db8->pdo()->exec("UPDATE cache_log SET visited_ts = '2026-11-01T12:00:00Z' WHERE tour_id = $tid8 AND code IN ('GCBQDDG', 'GC7C24G')");
+    $db8->pdo()->exec("UPDATE cache_log SET find_no = 11581 WHERE tour_id = $tid8 AND code = 'GC7C24G'");
+    $db8->sortByTime($tid8);
+    $order = array_column($db8->getTour($tid8)['caches'], 'code');
+    check('gleicher Zeitstempel → Fundnummer', array_slice($order, 2, 2) === ['GCBQDDG', 'GC7C24G'], implode(',', $order));
+
+    // Erneuter Import überschreibt nur Nicht-Manuelles
+    $c8 = array_column($db8->getTour($tid8)['caches'], null, 'code');
+    $db8->updateCache($c8['GC7C18Z']['id'], ['visited_ts' => '2026-11-01T08:00:00Z']);
+    $db8->applyFieldNotes($tid8, FieldNotes::parse($raw));
+    $c8 = array_column($db8->getTour($tid8)['caches'], null, 'code');
+    check('Re-Import: manuelle Uhrzeit bleibt, Rest aktualisiert', $c8['GC7C18Z']['visited_ts'] === '2026-11-01T08:00:00Z'
+        && $c8['GCBQDDG']['visited_ts'] === '2026-11-01T12:07:27Z');
+    $fn1 = $root . '/spec/20261101125653.txt';
+    if (is_file($fn1)) {
+        $st1 = $db8->applyFieldNotes($tid8, FieldNotes::parse((string) file_get_contents($fn1)));
+        check('kleinere Datei: früher Importierte zählen nicht als „ohne"', $st1['matched'] === 2 && $st1['missing'] === 1, json_encode($st1));
+    }
+    check('Notizen/Logs nie angefasst', $c8['GC7C18Z']['notes'] === '' && $c8['GC7C18Z']['log'] === '');
+}
 
 // ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";

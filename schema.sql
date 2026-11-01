@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS tour (
     gpx_hash   TEXT,            -- SHA-256 der GPX-Datei (informativ)
     codes_hash TEXT,            -- SHA-256 der sortierten GC-Code-Liste (Wiedererkennung)
     gpx_raw    BLOB,            -- rohe GPX, gzcompress
-    manually_sorted INTEGER NOT NULL DEFAULT 0
+    manually_sorted INTEGER NOT NULL DEFAULT 0,
+    fieldnotes_at TEXT          -- letzter Feldnotizen-Import (UTC)
 );
 
 CREATE TABLE IF NOT EXISTS cache_log (
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS cache_log (
     find_no   INTEGER,          -- Fundnummer aus c:geo-Feldnotiz
     manual_fields TEXT,         -- JSON-Array der von Hand gesetzten Felder
     companion_logs TEXT,        -- JSON: Begleiter-Logs aus GPX (Name, Typ, Datum)
+    fieldnote_ts TEXT,          -- Zeitstempel des Feldnotiz-Eintrags (UTC) oder NULL
     updated_at TEXT,
     FOREIGN KEY (tour_id) REFERENCES tour(id) ON DELETE CASCADE
 );
