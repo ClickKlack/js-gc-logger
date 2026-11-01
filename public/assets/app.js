@@ -1226,29 +1226,103 @@ $('#btn-new')?.addEventListener('click', startNewTour);
 /* ---------- Field-Notes-Export (Draft-Datei für geocaching.com) ---------- */
 
 let exportCaches = [];
+let exportRecipient = 'me';
+const exportManual = new Map();   // von Hand gesetzte Haken (id → bool), je Empfänger
+let templateTimer = null;
 
 $('#btn-export')?.addEventListener('click', openExport);
 $('#btn-export-close')?.addEventListener('click', () => hide($('#step-export')));
 
 async function openExport() {
   if (!state.tourId) return;
-  // alte Liste (ggf. andere Tour) sofort leeren
-  exportCaches = [];
-  $('#export-list').innerHTML = '';
-  $('#export-summary').textContent = '';
-  $('#export-preview').textContent = '';
+  exportRecipient = 'me';
+  exportManual.clear();
+  $('#export-recipient').innerHTML = '<option value="me">Ich (KI-Logs)</option>';
   show($('#step-export'));
   $('#step-export').scrollIntoView();
+  await loadExport();
+}
+
+// Kandidaten laden; template === undefined → gespeicherte Vorlage des Empfängers
+async function loadExport(template) {
+  // alte Liste (ggf. andere Tour/anderer Empfänger) sofort leeren
+  if (template === undefined) {
+    exportCaches = [];
+    $('#export-list').innerHTML = '';
+    $('#export-summary').textContent = '';
+    $('#export-preview').textContent = '';
+  }
   $('#export-status').textContent = 'Lade …';
   try {
     await flushEdits();
-    exportCaches = (await api('export_preview', { tour_id: String(state.tourId) })).caches;
+    const data = { tour_id: String(state.tourId), recipient: exportRecipient };
+    if (template !== undefined) data.template = template;
+    const res = await api('export_preview', data);
+    exportCaches = res.caches;
+    exportCaches.forEach((c) => { if (exportManual.has(c.id)) c.selected = exportManual.get(c.id); });
+    fillRecipients(res.recipients);
+    renderTemplateArea(res, template === undefined);
     renderExport();
-    $('#export-status').textContent = '';
+    $('#export-status').textContent = res.me ? '' : '⚠ gc_username fehlt in config.php – du fehlst in {mitcacher}.';
   } catch (ex) {
     $('#export-status').textContent = 'Fehler: ' + ex.message;
   }
 }
+
+function fillRecipients(names) {
+  const sel = $('#export-recipient');
+  sel.innerHTML = '<option value="me">Ich (KI-Logs)</option>'
+    + names.map((n) => '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + ' (Vorlage)</option>').join('');
+  sel.value = exportRecipient;
+}
+
+const TEMPLATE_SOURCES = { companion: 'eigene Vorlage', default: 'Standardvorlage', builtin: 'eingebaute Vorlage', edited: 'nur für diesen Export geändert' };
+
+function renderTemplateArea(res, fillText) {
+  const wrap = $('#export-template-wrap');
+  if (!res.recipient) { hide(wrap); return; }
+  show(wrap);
+  if (fillText) $('#export-template').value = res.template;
+  $('#template-source').textContent = TEMPLATE_SOURCES[res.template_source] || '';
+  $('#export-mitcacher').textContent = '{mitcacher} = ' + (res.mitcacher || '(niemand)');
+  $('#btn-tpl-save-companion').textContent = 'Als Vorlage für ' + res.recipient + ' speichern';
+  const unk = $('#template-unknown');
+  unk.textContent = res.unknown.length ? '⚠ Unbekannte Platzhalter: ' + res.unknown.map((u) => '{' + u + '}').join(' ') + ' – Tippfehler?' : '';
+  unk.classList.toggle('hidden', !res.unknown.length);
+}
+
+$('#export-recipient')?.addEventListener('change', (e) => {
+  exportRecipient = e.target.value;
+  exportManual.clear();
+  $('#template-status').textContent = '';
+  loadExport();
+});
+
+$('#export-template')?.addEventListener('input', () => {
+  clearTimeout(templateTimer);
+  templateTimer = setTimeout(() => loadExport($('#export-template').value), 400);
+});
+
+document.querySelectorAll('.ph-chip').forEach((b) => b.addEventListener('click', () => {
+  const ta = $('#export-template');
+  const pos = ta.selectionStart ?? ta.value.length;
+  ta.value = ta.value.slice(0, pos) + b.dataset.ph + ta.value.slice(ta.selectionEnd ?? pos);
+  ta.focus();
+  ta.selectionStart = ta.selectionEnd = pos + b.dataset.ph.length;
+  ta.dispatchEvent(new Event('input'));
+}));
+
+async function saveTemplate(name, label) {
+  try {
+    await api('save_template', { name, template: $('#export-template').value });
+    $('#template-status').textContent = '✓ ' + label + ' gespeichert.';
+    $('#template-source').textContent = name ? TEMPLATE_SOURCES.companion : TEMPLATE_SOURCES.default;
+  } catch (ex) {
+    $('#template-status').textContent = 'Fehler: ' + ex.message;
+  }
+}
+$('#btn-tpl-save-companion')?.addEventListener('click', () => saveTemplate(exportRecipient, 'Vorlage für ' + exportRecipient));
+$('#btn-tpl-save-default')?.addEventListener('click', () => saveTemplate('', 'Standardvorlage'));
 
 function renderExport() {
   const ul = $('#export-list');
@@ -1264,12 +1338,18 @@ function renderExport() {
     ];
     if (!c.available) parts.push('<span class="no-note">kein Log</span>');
     if (c.already) parts.push('✍️ schon geloggt');
+    if (c.companion_logged) parts.push('👥 ' + escapeHtml(exportRecipient) + ' hat schon geloggt');
+    if (c.not_found) parts.push('<span class="muted">kein Fund</span>');
     if (c.double_find) parts.push('<span class="dup-label warn">⚠ Doppelfund?</span>');
     li.innerHTML = '<input type="checkbox"' + (c.selected ? ' checked' : '') + (c.available ? '' : ' disabled')
         + ' aria-label="' + escapeHtml(c.name) + ' exportieren">'
       + '<span class="x-main"><b>' + escapeHtml(c.name) + '</b> <span class="muted">' + escapeHtml(c.code) + '</span>'
       + '<span class="x-sub">' + parts.map((p) => '<span class="part">' + p + '</span>').join(' · ') + '</span></span>';
-    li.querySelector('input').addEventListener('change', (e) => { c.selected = e.target.checked; renderExportSummary(); });
+    li.querySelector('input').addEventListener('change', (e) => {
+      c.selected = e.target.checked;
+      exportManual.set(c.id, c.selected);
+      renderExportSummary();
+    });
     ul.appendChild(li);
   });
   renderExportSummary();
@@ -1295,7 +1375,8 @@ $('#btn-export-download')?.addEventListener('click', async () => {
     const body = new FormData();
     body.append('action', 'export_fieldnotes');
     body.append('tour_id', String(state.tourId));
-    body.append('recipient', $('#export-recipient').value);
+    body.append('recipient', exportRecipient);
+    if (exportRecipient !== 'me') body.append('template', $('#export-template').value);
     body.append('ids', JSON.stringify(ids));
     const res = await fetch('api.php', { method: 'POST', body });
     if ((res.headers.get('Content-Type') || '').includes('application/json')) {
@@ -1303,7 +1384,7 @@ $('#btn-export-download')?.addEventListener('click', async () => {
       throw new Error(j.error || 'Unbekannter Fehler.');
     }
     const blob = await res.blob();
-    // Dateiname vom Server (Datum + Tour-Nummer)
+    // Dateiname vom Server (Datum + Tour-Nummer + ggf. Empfänger)
     const name = (/filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '') || [])[1] || 'geocache_visits.txt';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

@@ -678,5 +678,44 @@ check('ohne Log: nicht wählbar', !$k['GCE2']['available'] && !$k['GCE2']['selec
 check('schon selbst geloggt: abgewählt, echte Zeit', $k['GCE3']['already'] && !$k['GCE3']['selected'] && !$k['GCE3']['estimated']);
 
 // ---------------------------------------------------------------------------
+section('Field-Notes-Export für Begleiter (Schritt 12)');
+
+check('Namen verbinden', FieldNotesExport::joinNames(['A']) === 'A' && FieldNotesExport::joinNames(['A', 'B']) === 'A und B'
+    && FieldNotesExport::joinNames(['A', 'B', 'C']) === 'A, B und C' && FieldNotesExport::joinNames([]) === '');
+check('{mitcacher} für Clicki17: andere + ich, ohne Empfänger', FieldNotesExport::mitcacher(['die-steffi', 'Clicki17'], 'ClickKlack', 'Clicki17')
+    === 'die-steffi und ClickKlack');
+check('{mitcacher}: Empfänger ohne Groß/Klein, ich nicht doppelt', FieldNotesExport::mitcacher(['clicki17', 'ClickKlack', 'Felix_GC'], 'ClickKlack', 'Clicki17')
+    === 'Felix_GC und ClickKlack');
+check('unbekannte Platzhalter erkannt', FieldNotesExport::unknownPlaceholders('Hi {mitcacher} {tippfehler} {cachename} {Owner}') === ['tippfehler', 'Owner']);
+check('Vorlage rendern', FieldNotesExport::render('{cachename} ({gc_code}) mit {mitcacher}, Dank an {owner} um {uhrzeit}', [
+    'cachename' => 'Dose', 'gc_code' => 'GC1', 'mitcacher' => 'A und B', 'owner' => 'O', 'uhrzeit' => '12:49']) === 'Dose (GC1) mit A und B, Dank an O um 12:49');
+check('Dateiname mit Empfänger', FieldNotesExport::filename(['id' => 45, 'tour_date' => '2026-10-31'], 'die-steffi') === 'geocache_visits_2026-10-31_tour45_die-steffi.txt');
+
+$db12 = new Db(tmpdir() . '/b.sqlite');
+$t12  = $db12->createTour([
+    ['code' => 'GCB1', 'name' => 'Fund mit Zeit', 'owner' => 'Owner1', 'placed_by' => 'X, Y'],
+    ['code' => 'GCB2', 'name' => 'Schon von Clicki17 geloggt', 'placed_by' => 'NurPlacedBy',
+     'companion_logs' => [['name' => 'Clicki17', 'type' => 'Found it', 'date' => '2026-10-30']]],
+    ['code' => 'GCB3', 'name' => 'DNF'],
+], '<gpx/>', ['tour_date' => '2026-10-30', 'companions' => ['die-steffi', 'Clicki17']]);
+$c12 = array_column($db12->getTour($t12)['caches'], null, 'code');
+$db12->updateCache($c12['GCB1']['id'], ['visited_ts' => '2026-10-30T11:49:00Z']);
+$db12->updateCache($c12['GCB3']['id'], ['log_type' => "Didn't find it"]);
+$k12 = array_column(FieldNotesExport::candidatesForCompanion($db12->getTour($t12), 'Clicki17', '{mitcacher}|{cachename}|{owner}|{uhrzeit}|{gc_code}', 'ClickKlack'), null, 'code');
+check('Text gerendert (Owner, Uhrzeit Ortszeit)', $k12['GCB1']['text'] === 'die-steffi und ClickKlack|Fund mit Zeit|Owner1|12:49|GCB1', $k12['GCB1']['text']);
+check('Owner-Fallback placed_by, geschätzte Zeit → {uhrzeit} leer', $k12['GCB2']['text'] === 'die-steffi und ClickKlack|Schon von Clicki17 geloggt|NurPlacedBy||GCB2', $k12['GCB2']['text']);
+check('Vorauswahl: Fund ja, schon geloggt nein, DNF nein', $k12['GCB1']['selected'] && !$k12['GCB2']['selected'] && $k12['GCB2']['companion_logged']
+    && !$k12['GCB3']['selected'] && $k12['GCB3']['not_found']);
+
+check('ohne gespeicherte Vorlage → eingebaute', $db12->companionTemplate('Clicki17')['source'] === 'builtin');
+$db12->saveTemplate('', 'Standard {cachename}');
+check('Standardvorlage aus DB', $db12->companionTemplate('Clicki17') === ['template' => 'Standard {cachename}', 'source' => 'default']);
+$db12->saveTemplate('Clicki17', "Für Clicki17\r\n{cachename}");
+check('Vorlage je Begleiter ersetzt Standard (CRLF → LF)', $db12->companionTemplate('Clicki17') === ['template' => "Für Clicki17\n{cachename}", 'source' => 'companion']
+    && $db12->companionTemplate('die-steffi')['source'] === 'default');
+$db12->saveTemplate('Clicki17', '');
+check('leere Begleiter-Vorlage → wieder Standard', $db12->companionTemplate('Clicki17')['source'] === 'default');
+
+// ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";
 exit($fails === 0 ? 0 : 1);

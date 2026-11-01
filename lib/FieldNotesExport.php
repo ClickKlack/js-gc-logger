@@ -20,11 +20,16 @@ final class FieldNotesExport
     public const FILENAME = 'geocache_visits.txt';
     private const BLANK_LINE = "\u{200B}";
 
-    /** Dateiname mit Tour-Datum und -Nummer, z. B. geocache_visits_2026-10-31_tour45.txt */
-    public static function filename(array $tour): string
+    /**
+     * Dateiname mit Tour-Datum, -Nummer und ggf. Empfänger,
+     * z. B. geocache_visits_2026-10-31_tour45.txt bzw. …_tour45_Clicki17.txt
+     */
+    public static function filename(array $tour, string $recipient = ''): string
     {
         $date = preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) ($tour['tour_date'] ?? '')) ? $tour['tour_date'] : '';
-        return 'geocache_visits' . ($date !== '' ? '_' . $date : '') . '_tour' . (int) ($tour['id'] ?? 0) . '.txt';
+        $who  = trim((string) preg_replace('/[^A-Za-z0-9_\-]+/', '_', $recipient), '_');
+        return 'geocache_visits' . ($date !== '' ? '_' . $date : '') . '_tour' . (int) ($tour['id'] ?? 0)
+            . ($who !== '' ? '_' . $who : '') . '.txt';
     }
     private const TZ = 'Europe/Berlin';
 
@@ -90,6 +95,104 @@ final class FieldNotesExport
                 'already'     => $already,
                 'double_find' => $doubleFind,
                 'selected'    => $text !== '' && !$already,
+            ];
+        }
+        return $out;
+    }
+
+    /** Standardvorlage für Begleiter (überschreibbar je Begleiter bzw. global in der DB). */
+    public const DEFAULT_TEMPLATE = "Heute zusammen mit {mitcacher} unterwegs gewesen und „{cachename}“ gefunden.\n\n"
+        . "Vielen Dank an {owner} fürs Verstecken und Pflegen!";
+
+    /** Platzhalter, die Vorlagen kennen. */
+    public const PLACEHOLDERS = ['mitcacher', 'cachename', 'owner', 'uhrzeit', 'gc_code'];
+
+    /** „A", „A und B", „A, B und C" */
+    public static function joinNames(array $names): string
+    {
+        $names = array_values($names);
+        if (count($names) <= 1) {
+            return (string) ($names[0] ?? '');
+        }
+        $last = array_pop($names);
+        return implode(', ', $names) . ' und ' . $last;
+    }
+
+    /**
+     * Alle anderen Teilnehmer aus Sicht des Empfängers: Begleiter der Tour ohne ihn,
+     * dazu ich (gc_username) am Ende.
+     * @param list<string> $companions
+     */
+    public static function mitcacher(array $companions, string $me, string $recipient): string
+    {
+        $others = array_values(array_filter($companions, static fn ($n): bool =>
+            mb_strtolower((string) $n) !== mb_strtolower($recipient) && mb_strtolower((string) $n) !== mb_strtolower($me)));
+        if ($me !== '' && mb_strtolower($me) !== mb_strtolower($recipient)) {
+            $others[] = $me;
+        }
+        return self::joinNames($others);
+    }
+
+    /** Platzhalter in der Vorlage, die es nicht gibt (Tippfehler-Schutz). */
+    public static function unknownPlaceholders(string $template): array
+    {
+        preg_match_all('/\{([^{}\s]+)\}/u', $template, $m);
+        return array_values(array_unique(array_diff($m[1], self::PLACEHOLDERS)));
+    }
+
+    /** @param array<string,string> $vars */
+    public static function render(string $template, array $vars): string
+    {
+        $map = [];
+        foreach (self::PLACEHOLDERS as $p) {
+            $map['{' . $p . '}'] = (string) ($vars[$p] ?? '');
+        }
+        return strtr($template, $map);
+    }
+
+    /**
+     * Export-Kandidaten für einen Begleiter: Text = gerenderte Vorlage, Typ = Status.
+     * Vorausgewählt: Status Fund (bzw. Teilgenommen/Webcam-Foto), sofern der Begleiter
+     * laut GPX noch nicht selbst geloggt hat. Die Teilnahme je Cache wird nur hier
+     * (per Abwahl) gepflegt.
+     * @param array<string,mixed> $tour Ergebnis von Db::getTour
+     * @return list<array<string,mixed>>
+     */
+    public static function candidatesForCompanion(array $tour, string $recipient, string $template, string $me): array
+    {
+        $caches   = $tour['caches'] ?? [];
+        $times    = self::schedule($caches, (string) ($tour['tour_date'] ?? ''));
+        $mit      = self::mitcacher((array) ($tour['companions'] ?? []), $me, $recipient);
+        $out      = [];
+        foreach ($caches as $i => $c) {
+            $loggedBy = false;
+            foreach ($c['companion_logs'] ?? [] as $l) {
+                $loggedBy = $loggedBy || mb_strtolower((string) ($l['name'] ?? '')) === mb_strtolower($recipient);
+            }
+            $owner = trim((string) ($c['owner'] ?? '')) !== '' ? (string) $c['owner'] : (string) ($c['placed_by'] ?? '');
+            $time  = $times[$i]['estimated'] ? '' : (new DateTimeImmutable($times[$i]['ts']))
+                ->setTimezone(new DateTimeZone(self::TZ))->format('H:i');
+            $isFound = in_array((string) ($c['log_type'] ?? 'Found it'), Db::FOUND_TYPES, true);
+            $out[] = [
+                'id'              => (int) $c['id'],
+                'code'            => (string) $c['code'],
+                'name'            => (string) ($c['name'] ?? ''),
+                'log_type'        => (string) ($c['log_type'] ?? 'Found it'),
+                'ts'              => $times[$i]['ts'],
+                'estimated'       => $times[$i]['estimated'],
+                'text'            => self::render($template, [
+                    'mitcacher' => $mit,
+                    'cachename' => (string) ($c['name'] ?? ''),
+                    'owner'     => $owner,
+                    'uhrzeit'   => $time,
+                    'gc_code'   => (string) $c['code'],
+                ]),
+                'available'        => true,
+                'already'          => false,
+                'companion_logged' => $loggedBy,
+                'not_found'        => !$isFound,
+                'double_find'      => false,
+                'selected'         => $isFound && !$loggedBy,
             ];
         }
         return $out;

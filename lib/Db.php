@@ -217,6 +217,34 @@ final class Db
         return (new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin')))->format('Y-m-d');
     }
 
+    /** Field-Notes-Vorlage für einen Begleiter: eigene, sonst Standard (DB), sonst eingebaut. */
+    public function companionTemplate(string $name): array
+    {
+        $stmt = $this->pdo->prepare("SELECT template FROM companion WHERE name = ? AND COALESCE(template, '') <> ''");
+        $stmt->execute([$name]);
+        $own = $stmt->fetchColumn();
+        if (is_string($own)) {
+            return ['template' => $own, 'source' => 'companion'];
+        }
+        $default = $this->pdo->query("SELECT value FROM setting WHERE key = 'fieldnotes_template'")->fetchColumn();
+        return is_string($default) && $default !== ''
+            ? ['template' => $default, 'source' => 'default']
+            : ['template' => FieldNotesExport::DEFAULT_TEMPLATE, 'source' => 'builtin'];
+    }
+
+    /** Vorlage speichern: $name = '' → Standardvorlage, sonst je Begleiter. Leer = löschen. */
+    public function saveTemplate(string $name, string $template): void
+    {
+        $template = str_replace(["\r\n", "\r"], "\n", $template);
+        if ($name === '') {
+            $this->pdo->prepare("INSERT INTO setting (key, value) VALUES ('fieldnotes_template', ?)
+                                 ON CONFLICT(key) DO UPDATE SET value = excluded.value")->execute([$template]);
+            return;
+        }
+        $this->pdo->prepare('INSERT INTO companion (name, template) VALUES (?, ?)
+                             ON CONFLICT(name) DO UPDATE SET template = excluded.template')->execute([$name, $template]);
+    }
+
     /** Alle je verwendeten Begleiter (für Erkennung ihrer Logs in der GPX). */
     public function knownCompanions(): array
     {

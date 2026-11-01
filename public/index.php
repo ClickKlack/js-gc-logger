@@ -19,7 +19,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=26">
+    <link rel="stylesheet" href="assets/style.css?v=27">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -229,6 +229,27 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
                     <option value="me">Ich (KI-Logs)</option>
                 </select>
             </label>
+            <div id="export-template-wrap" class="hidden">
+                <label>Vorlage <span id="template-source" class="badge"></span>
+                    <textarea id="export-template" rows="5"></textarea>
+                </label>
+                <p class="muted">Platzhalter antippen zum Einfügen:
+                    <span class="ph-chips">
+                        <button type="button" class="ph-chip" data-ph="{mitcacher}">{mitcacher}</button>
+                        <button type="button" class="ph-chip" data-ph="{cachename}">{cachename}</button>
+                        <button type="button" class="ph-chip" data-ph="{owner}">{owner}</button>
+                        <button type="button" class="ph-chip" data-ph="{uhrzeit}">{uhrzeit}</button>
+                        <button type="button" class="ph-chip" data-ph="{gc_code}">{gc_code}</button>
+                    </span>
+                </p>
+                <p id="export-mitcacher" class="muted"></p>
+                <p id="template-unknown" class="field-hint hidden"></p>
+                <div class="row">
+                    <button id="btn-tpl-save-companion" class="ghost" type="button">Als Vorlage für … speichern</button>
+                    <button id="btn-tpl-save-default" class="ghost" type="button">Als Standardvorlage speichern</button>
+                </div>
+                <p id="template-status" class="muted"></p>
+            </div>
             <p id="export-summary" class="muted"></p>
             <ul id="export-list" class="export-list"></ul>
             <details class="listing-wrap">
@@ -264,6 +285,6 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=33"></script>
+<script src="assets/app.js?v=34"></script>
 </body>
 </html>

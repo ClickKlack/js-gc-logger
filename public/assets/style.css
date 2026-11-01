@@ -253,6 +253,9 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .export-item .x-sub .part { white-space: nowrap; }
 .export-preview { white-space: pre-wrap; font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 300px; overflow: auto; }
 .estimated { font-style: italic; }
+.ph-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.ph-chip { min-height: 34px; padding: 4px 10px; font-size: 13px; font-weight: 600; font-family: ui-monospace, monospace;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 999px; }
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
 .pager #page-info { text-align: center; flex: 1; }
 .filter { margin: 12px 0 4px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; }

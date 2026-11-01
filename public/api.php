@@ -114,6 +114,39 @@ function parse_gpx(string $xml, array $config): array
     return Gpx::parse($xml, (string) ($config['gc_username'] ?? ''), array_values(array_unique($companions)));
 }
 
+/**
+ * Export-Kandidaten je Empfänger (POST recipient, optional template für diesen Export).
+ * @return array{caches: list<array<string,mixed>>, recipient: string, recipients: list<string>,
+ *               template: string, template_source: string, unknown: list<string>, mitcacher: string, me: string}
+ */
+function export_candidates(Db $db, array $tour, array $config): array
+{
+    $me         = trim((string) ($config['gc_username'] ?? ''));
+    $recipients = array_values(array_filter((array) $tour['companions'], static fn ($n): bool =>
+        mb_strtolower((string) $n) !== mb_strtolower($me)));
+    $recipient  = trim((string) ($_POST['recipient'] ?? ''));
+    $base       = ['recipients' => $recipients, 'me' => $me];
+    if ($recipient === '' || $recipient === 'me') {
+        return $base + ['caches' => FieldNotesExport::candidatesForMe($tour), 'recipient' => '',
+            'template' => '', 'template_source' => '', 'unknown' => [], 'mitcacher' => ''];
+    }
+    if (!in_array($recipient, $recipients, true)) {
+        fail('„' . $recipient . '“ ist kein Begleiter dieser Tour.');
+    }
+    $tpl = $db->companionTemplate($recipient);
+    if (isset($_POST['template'])) {
+        $tpl = ['template' => (string) $_POST['template'], 'source' => 'edited'];
+    }
+    return $base + [
+        'caches'          => FieldNotesExport::candidatesForCompanion($tour, $recipient, $tpl['template'], $me),
+        'recipient'       => $recipient,
+        'template'        => $tpl['template'],
+        'template_source' => $tpl['source'],
+        'unknown'         => FieldNotesExport::unknownPlaceholders($tpl['template']),
+        'mitcacher'       => FieldNotesExport::mitcacher((array) $tour['companions'], $me, $recipient),
+    ];
+}
+
 /** DB für Aktionen, die Speichern voraussetzen. */
 function storage_db(array $config): Db
 {
@@ -215,39 +248,48 @@ try {
         }
 
         case 'export_preview': {
-            // Kandidaten für die Draft-Datei (Vorschau + Auswahl im Dialog)
+            // Kandidaten für die Draft-Datei (Vorschau + Auswahl im Dialog).
+            // recipient: '' / 'me' = eigene KI-Logs, sonst Begleiter der Tour (Vorlage).
             $db   = storage_db($config);
             $tour = $db->getTour((int) ($_POST['tour_id'] ?? 0));
             if ($tour === null) {
                 fail('Tour nicht gefunden.', 404);
             }
-            respond(['ok' => true, 'caches' => FieldNotesExport::candidatesForMe($tour)]);
+            respond(['ok' => true] + export_candidates($db, $tour, $config));
         }
 
         case 'export_fieldnotes': {
-            // Draft-Datei herunterladen: nur die gewählten Caches mit Log
+            // Draft-Datei herunterladen: nur die gewählten Caches mit Text
             $db   = storage_db($config);
             $tour = $db->getTour((int) ($_POST['tour_id'] ?? 0));
             if ($tour === null) {
                 fail('Tour nicht gefunden.', 404);
             }
+            $result  = export_candidates($db, $tour, $config);
             $ids     = array_map('intval', (array) (json_decode((string) ($_POST['ids'] ?? '[]'), true) ?: []));
             $entries = array_values(array_filter(
-                FieldNotesExport::candidatesForMe($tour),
-                static fn (array $c): bool => $c['available'] && in_array($c['id'], $ids, true)
+                $result['caches'],
+                static fn (array $c): bool => $c['available'] && trim($c['text']) !== '' && in_array($c['id'], $ids, true)
             ));
             if ($entries === []) {
-                fail('Keine Caches mit Log ausgewählt.');
+                fail('Keine Caches mit Text ausgewählt.');
             }
             $bytes = FieldNotesExport::build($entries);
             if (ob_get_level() > 0) {
                 ob_end_clean();
             }
             header('Content-Type: text/plain; charset=UTF-16LE');
-            header('Content-Disposition: attachment; filename="' . FieldNotesExport::filename($tour) . '"');
+            header('Content-Disposition: attachment; filename="' . FieldNotesExport::filename($tour, $result['recipient']) . '"');
             header('Content-Length: ' . strlen($bytes));
             echo $bytes;
             exit;
+        }
+
+        case 'save_template': {
+            // name = '' → Standardvorlage, sonst Vorlage für diesen Begleiter
+            $db = storage_db($config);
+            $db->saveTemplate(trim((string) ($_POST['name'] ?? '')), (string) ($_POST['template'] ?? ''));
+            respond(['ok' => true]);
         }
 
         case 'update_tour': {
