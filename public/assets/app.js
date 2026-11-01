@@ -981,8 +981,10 @@ function showToursView() {
   flushEdits();
   TOUR_SECTIONS.forEach((sel) => hide($(sel)));
   show($('#view-tours'));
+  show($('#view-share'));
   show($('#view-backup'));
   tourPage = 1;
+  loadShares();
   window.scrollTo(0, 0);
   fetchAndRenderTours($('#tour-list'), $('#load-status'));
 }
@@ -1075,11 +1077,16 @@ $('#btn-filter-reset')?.addEventListener('click', () => {
 });
 
 // Feste Begleiter (config) vorn, übrige alphabetisch – als zwei Gruppen
-function fillCompanionFilter({ fixed = [], others = [] }) {
-  const sel = $('#f-companion');
+function fillCompanionFilter(companions) {
+  fillCompanionSelect($('#f-companion'), '– alle –', companions);
+  const rec = $('#share-recipient');
+  if (rec) fillCompanionSelect(rec, '– Begleiter wählen –', companions);
+}
+
+function fillCompanionSelect(sel, emptyLabel, { fixed = [], others = [] }) {
   const cur = sel.value;
   const opts = (names) => names.map((n) => '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>').join('');
-  sel.innerHTML = '<option value="">– alle –</option>'
+  sel.innerHTML = '<option value="">' + escapeHtml(emptyLabel) + '</option>'
     + (fixed.length ? '<optgroup label="Feste Begleiter">' + opts(fixed) + '</optgroup>' : '')
     + (others.length ? '<optgroup label="Weitere">' + opts(others) + '</optgroup>' : '');
   sel.value = [...fixed, ...others].includes(cur) ? cur : '';
@@ -1188,7 +1195,7 @@ async function openTour(id, opts = {}) {
     setTourDateUI(state.tourDate);
     $('#context-text').value = state.context;
 
-    ['#view-tours', '#view-backup'].forEach((sel) => { const el = $(sel); if (el) hide(el); });
+    ['#view-tours', '#view-share', '#view-backup'].forEach((sel) => { const el = $(sel); if (el) hide(el); });
     if (state.context.trim()) {
       // Kontext steht schon: direkt zu den Caches
       placeTourFields(true);
@@ -1288,6 +1295,12 @@ function renderTemplateArea(res, fillText) {
   $('#template-source').textContent = TEMPLATE_SOURCES[res.template_source] || '';
   $('#export-mitcacher').textContent = '{mitcacher} = ' + (res.mitcacher || '(niemand)');
   $('#btn-tpl-save-companion').textContent = 'Als Vorlage für ' + res.recipient + ' speichern';
+  $('#btn-export-share').classList.toggle('hidden', !window.GC_STORE);
+  // Hinweis, wenn der Begleiter seine Vorlage zuletzt selbst über seinen Link gespeichert hat
+  const changed = $('#template-changed');
+  const bySharer = res.template_source === 'companion' && res.template_changed_by === 'share' && res.template_changed_at;
+  changed.textContent = bySharer ? '✏️ Geändert von ' + res.recipient + ' über Link am ' + formatUtcLocal(res.template_changed_at) : '';
+  changed.classList.toggle('hidden', !bySharer);
   const unk = $('#template-unknown');
   unk.textContent = res.unknown.length ? '⚠ Unbekannte Platzhalter: ' + res.unknown.map((u) => '{' + u + '}').join(' ') + ' – Tippfehler?' : '';
   unk.classList.toggle('hidden', !res.unknown.length);
@@ -1319,12 +1332,184 @@ async function saveTemplate(name, label) {
     await api('save_template', { name, template: $('#export-template').value });
     $('#template-status').textContent = '✓ ' + label + ' gespeichert.';
     $('#template-source').textContent = name ? TEMPLATE_SOURCES.companion : TEMPLATE_SOURCES.default;
+    if (name) hide($('#template-changed'));
   } catch (ex) {
     $('#template-status').textContent = 'Fehler: ' + ex.message;
   }
 }
 $('#btn-tpl-save-companion')?.addEventListener('click', () => saveTemplate(exportRecipient, 'Vorlage für ' + exportRecipient));
 $('#btn-tpl-save-default')?.addEventListener('click', () => saveTemplate('', 'Standardvorlage'));
+$('#btn-export-share')?.addEventListener('click', () => {
+  const recipient = exportRecipient;
+  const tourId = state.tourId;
+  showToursView();
+  openShareNew(recipient, tourId);
+});
+
+/* ---------- Freigabe-Links für Begleiter (spec-v3) ---------- */
+
+let shareTours = [];   // Touren des gewählten Empfängers: { id, title, tour_date, date_min, date_max, cache_count }
+const shareChecked = new Set();
+
+// „2026-11-01 16:24:04" (UTC, SQLite) → „01.11.2026 17:24" in Ortszeit
+function formatUtcLocal(s) {
+  const d = new Date(String(s).replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return s || '';
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+async function loadShares(highlightId) {
+  const ul = $('#share-list');
+  if (!ul) return;
+  try {
+    const { shares } = await api('share_list');
+    ul.innerHTML = shares.length ? '' : '<li class="muted">Keine aktiven Links.</li>';
+    shares.forEach((s) => ul.appendChild(shareItem(s, s.id === highlightId)));
+    $('#share-status').textContent = '';
+  } catch (ex) {
+    $('#share-status').textContent = 'Fehler: ' + ex.message;
+  }
+}
+
+function shareItem(s, isNew) {
+  const li = document.createElement('li');
+  li.className = 'share-item' + (isNew ? ' new' : '');
+  const tours = s.tours.map((t) => '#' + t.id + ' ' + escapeHtml(t.title || 'Tour') + ' (' + escapeHtml(formatDate(t.tour_date)) + ')').join(', ');
+  const meta = [
+    'gültig bis ' + escapeHtml(formatUtcLocal(s.expires_at)),
+    s.last_used_at ? 'zuletzt geöffnet ' + escapeHtml(formatUtcLocal(s.last_used_at)) : 'noch nicht geöffnet',
+    s.downloads + ' Download' + (s.downloads === 1 ? '' : 's'),
+    s.exported + ' Cache' + (s.exported === 1 ? '' : 's') + ' exportiert',
+  ];
+  li.innerHTML = '<span class="x-main"><b>👤 ' + escapeHtml(s.recipient) + '</b>' + (isNew ? ' <span class="badge">neu</span>' : '')
+    + '<span class="x-sub">' + tours + '</span>'
+    + '<span class="x-sub">' + meta.map((m) => '<span class="part">' + m + '</span>').join(' · ') + '</span>'
+    + '<input type="text" class="share-url" readonly aria-label="Link für ' + escapeHtml(s.recipient) + '" value="' + escapeHtml(s.url) + '">'
+    + '<span class="row">'
+    + '<button type="button" class="ghost btn-copy">📋 Kopieren</button>'
+    + (navigator.share ? '<button type="button" class="ghost btn-share">📤 Teilen</button>' : '')
+    + '<button type="button" class="ghost btn-revoke">🗑 Widerrufen</button>'
+    + '</span><span class="x-sub share-msg" aria-live="polite"></span></span>';
+  const msg = li.querySelector('.share-msg');
+  const input = li.querySelector('.share-url');
+  input.addEventListener('focus', () => input.select());
+  li.querySelector('.btn-copy').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(s.url);
+    } catch {
+      input.select();
+      document.execCommand('copy');
+    }
+    msg.textContent = '✓ Link kopiert.';
+  });
+  li.querySelector('.btn-share')?.addEventListener('click', () => {
+    navigator.share({ title: 'Field Notes', text: 'Hallo ' + s.recipient + ', hier deine Field Notes zum Hochladen bei geocaching.com:', url: s.url })
+      .catch(() => {});   // Abbruch durch Nutzer
+  });
+  li.querySelector('.btn-revoke').addEventListener('click', async () => {
+    if (!confirm('Link für ' + s.recipient + ' widerrufen? Er funktioniert danach nicht mehr.')) return;
+    try {
+      await api('share_delete', { id: String(s.id) });
+      loadShares();
+    } catch (ex) {
+      msg.textContent = 'Fehler: ' + ex.message;
+    }
+  });
+  return li;
+}
+
+// Alle Touren mit diesem Begleiter (über alle Seiten der Tourliste)
+async function loadShareTours(recipient) {
+  const ul = $('#share-tours');
+  const status = $('#share-tours-status');
+  shareTours = [];
+  ul.innerHTML = '';
+  renderShareCreate();
+  if (!recipient) { status.textContent = ''; return; }
+  status.textContent = 'Lade Touren …';
+  try {
+    for (let page = 1, pages = 1; page <= pages; page++) {
+      const res = await api('list_tours', { companion: recipient, page: String(page) });
+      shareTours.push(...res.tours);
+      pages = res.pages;
+    }
+    status.textContent = shareTours.length ? 'Touren mit ' + recipient + ':' : 'Keine Touren mit ' + recipient + '.';
+    renderShareTours();
+  } catch (ex) {
+    status.textContent = 'Fehler: ' + ex.message;
+  }
+}
+
+function renderShareTours() {
+  const ul = $('#share-tours');
+  ul.innerHTML = '';
+  shareTours.forEach((t) => {
+    const li = document.createElement('li');
+    li.className = 'export-item clickable';
+    li.innerHTML = '<input type="checkbox"' + (shareChecked.has(t.id) ? ' checked' : '') + ' aria-label="Tour ' + t.id + ' freigeben">'
+      + '<span class="x-main"><b>#' + t.id + '</b> ' + escapeHtml(t.title || 'Tour')
+      + '<span class="x-sub"><span class="part">' + escapeHtml(formatRange(t.date_min || t.tour_date, t.date_max || t.tour_date)) + '</span>'
+      + ' · <span class="part">' + t.cache_count + ' Caches</span></span></span>';
+    const cb = li.querySelector('input');
+    cb.addEventListener('change', () => {
+      if (cb.checked) shareChecked.add(t.id); else shareChecked.delete(t.id);
+      renderShareCreate();
+    });
+    // ganze Karte anklickbar, nicht nur die Checkbox
+    li.addEventListener('click', (e) => {
+      if (e.target === cb) return;
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event('change'));
+    });
+    ul.appendChild(li);
+  });
+  renderShareCreate();
+}
+
+function renderShareCreate() {
+  const n = shareTours.filter((t) => shareChecked.has(t.id)).length;
+  const btn = $('#btn-share-create');
+  btn.disabled = n === 0;
+  btn.textContent = '🔗 Link erzeugen' + (n ? ' (' + n + ' Tour' + (n === 1 ? '' : 'en') + ')' : '');
+}
+
+// Aus dem Export-Dialog: Empfänger + aktuelle Tour vorbelegen
+async function openShareNew(recipient, tourId) {
+  const det = $('#share-new');
+  det.open = true;
+  shareChecked.clear();
+  if (tourId) shareChecked.add(tourId);
+  const sel = $('#share-recipient');
+  if (![...sel.options].some((o) => o.value === recipient)) sel.add(new Option(recipient, recipient));
+  sel.value = recipient;
+  await loadShareTours(recipient);
+  $('#view-share').scrollIntoView();
+}
+
+$('#share-recipient')?.addEventListener('change', (e) => {
+  shareChecked.clear();
+  $('#share-create-status').textContent = '';
+  loadShareTours(e.target.value);
+});
+
+$('#btn-share-create')?.addEventListener('click', async () => {
+  const recipient = $('#share-recipient').value;
+  const ids = shareTours.filter((t) => shareChecked.has(t.id)).map((t) => t.id);
+  const status = $('#share-create-status');
+  status.textContent = 'Erzeuge Link …';
+  try {
+    const { share } = await api('share_create', { recipient, tour_ids: JSON.stringify(ids) });
+    status.textContent = '✓ Link für ' + recipient + ' erzeugt – unten kopieren oder teilen.';
+    shareChecked.clear();
+    renderShareTours();
+    $('#share-new').open = false;
+    await loadShares(share.id);
+    $('#share-list .share-item.new')?.scrollIntoView({ block: 'nearest' });
+  } catch (ex) {
+    status.textContent = 'Fehler: ' + ex.message;
+  }
+});
 
 function renderExport() {
   const ul = $('#export-list');

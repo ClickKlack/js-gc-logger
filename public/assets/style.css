@@ -248,9 +248,18 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .export-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 6px; }
 .export-item input { width: 22px; height: 22px; margin-top: 2px; flex: none; }
 .export-item.unavailable { opacity: .55; }
+.export-item.clickable { cursor: pointer; -webkit-user-select: none; user-select: none; }
 .export-item .x-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .export-item .x-sub { display: block; font-size: 13px; color: var(--muted); }
 .export-item .x-sub .part { white-space: nowrap; }
+.share-item { display: block; padding: 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 6px; }
+.share-item.new { border-color: var(--primary); }
+.share-item .x-main { display: block; overflow-wrap: anywhere; }
+.share-item .x-sub { display: block; font-size: 13px; color: var(--muted); }
+.share-item .x-sub .part { white-space: nowrap; }
+.share-item .share-url { width: 100%; margin-top: 8px; font-size: 13px; font-family: ui-monospace, monospace; }
+.share-item .row { margin-top: 8px; }
+.share-item .row .ghost { flex: 1 1 auto; }
 .export-preview { white-space: pre-wrap; font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 300px; overflow: auto; }
 .estimated { font-style: italic; }
 .ph-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
