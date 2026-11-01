@@ -889,7 +889,7 @@ $leak = array_filter(['LISTINGGEHEIM', 'HINTGEHEIM', 'KONTEXTGEHEIM', 'INFOGEHEI
 check('Gast-Ansicht: keine Listing/Hint/Kontext/Info/Notiz/KI-Log', $leak === [], implode(', ', $leak));
 $pubCache = Share::publicTours($tsV)[1]['caches'][0];
 check('Gast-Ansicht: nur Whitelist-Felder', array_keys($pubCache) === ['id', 'code', 'name', 'log_type', 'ts', 'estimated', 'text',
-    'companion_logged', 'selected', 'type', 'exported_at', 'locked'], implode(',', array_keys($pubCache)));
+    'companion_logged', 'selected', 'type', 'exported_at'], implode(',', array_keys($pubCache)));
 
 $entV = Share::entries($tsV, [$cV['GCV1'], $cV['GCV2'], 999999]);
 check('entries: nur IDs der Freigabe', array_column($entV, 'code') === ['GCV1', 'GCV2']);
@@ -900,9 +900,13 @@ check('Datei = build() wie normaler Export', FieldNotesExport::build($entV)
 $dbV->markExported($shV['id'], array_column($entV, 'id'));
 $tsV2 = Share::tours($dbV, $dbV->findShare($shV['token']), $tpl, 'ClickKlack');
 $by2  = array_column(array_merge(...array_column($tsV2, 'caches')), null, 'code');
-check('exportiert → gesperrt, abgewählt, Datum gesetzt', $by2['GCV1']['locked'] && !$by2['GCV1']['selected']
-    && $by2['GCV1']['exported_at'] !== null && !$by2['GCV4']['locked']);
-check('entries: gesperrte nicht erneut', array_column(Share::entries($tsV2, [$cV['GCV1'], $by2['GCV4']['id']]), 'code') === ['GCV4']);
+check('exportiert → nicht vorausgewählt, Datum gesetzt', !$by2['GCV1']['selected']
+    && $by2['GCV1']['exported_at'] !== null && $by2['GCV4']['exported_at'] === null && $by2['GCV4']['selected']);
+check('entries: exportierte manuell erneut wählbar', array_column(Share::entries($tsV2, [$cV['GCV1'], $by2['GCV4']['id']]), 'code') === ['GCV4', 'GCV1']);
+$dbV->pdo()->exec("UPDATE share_export SET exported_at = '2026-01-01 00:00:00'");
+$dbV->markExported($shV['id'], [$cV['GCV1']]);
+check('erneuter Export: Datum aktualisiert', $dbV->exportedCaches($shV['id'])[$cV['GCV1']] !== '2026-01-01 00:00:00'
+    && $dbV->exportedCaches($shV['id'])[$cV['GCV2']] === '2026-01-01 00:00:00');
 
 check('Dateiname: mehrere Touren', Share::filename('Clicki17', $tsV) === 'geocache_visits_Clicki17_' . Db::today() . '.txt');
 check('Dateiname: eine Tour wie normaler Export', Share::filename('Clicki17', [$tsV[1]]) === 'geocache_visits_2026-10-31_tour' . $tV1 . '_Clicki17.txt');

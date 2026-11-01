@@ -95,10 +95,10 @@ Geklärte Punkte (Details im Fragen-Log):
   erscheinen beim nächsten Öffnen).
 - Checkbox je Cache, Vorauswahl wie heute: Status Fund und noch nicht selbst geloggt
   (Begleiter-Log aus GPX). Hinweis „👥 schon geloggt" (abwählbar wie bisher).
-- **Bereits über diesen Link exportiert:** Hinweis „✓ exportiert am …", Checkbox
-  **deaktiviert** und abgewählt. Zurücksetzen nur durch einen neuen Link (der hat eine
-  eigene, leere Export-Historie).
-- „Alle / keine" je Tour (wirkt nicht auf deaktivierte).
+- **Bereits über diesen Link exportiert:** Hinweis „✓ exportiert am …" (Datum des
+  letzten Exports), beim Öffnen der Seite und nach dem Download **nicht ausgewählt**,
+  aber jederzeit von Hand wieder wählbar (erneuter Download erlaubt).
+- „Alle / keine" je Tour.
 
 ### Logtext [E]
 - Vorlage wie in meinem Export-Dialog: eigene Vorlage des Empfängers, sonst meine
@@ -188,7 +188,7 @@ Neue Tabellen/Spalten in `schema.sql` **und** als Migration 6 in `Db::migrations
   `load` · `preview` (Vorlage → gerenderte Texte) · `save_template` · `download`.
 - `download` rechnet die Kandidaten **serverseitig neu** (wie `export_fieldnotes`) und
   akzeptiert vom Client nur: gewählte Cache-IDs (müssen zu den Touren der Freigabe
-  gehören und dürfen noch nicht exportiert sein) und die Vorlage. Längenlimit für die
+  gehören) und die Vorlage. Längenlimit für die
   Vorlage (z. B. 4.000 Zeichen).
 - Header: `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer` (Token nicht per
   Referer an geocaching.com o. ä. leaken), `Cache-Control: no-store`.
@@ -231,6 +231,6 @@ Grobe Größe: 1 Migration, ~6 neue Db-Methoden, 3 Admin- + 4 Gast-Actions, 1 ne
 | 2 | Link später erneut kopieren | Ja → Token im Klartext speichern | 2026-11-01 |
 | 3 | Live oder Momentaufnahme | Aktueller Stand (live) | 2026-11-01 |
 | 4 | Gast speichert Vorlage | Überschreibt meine Vorlage für ihn; Hinweis „geändert von XXX über Link am …" in meinem Export-Dialog, kein Rückgängig | 2026-11-01 |
-| 5 | Exportierte Caches merken | Ja, serverseitig je Link; anzeigen und Checkbox deaktivieren | 2026-11-01 |
+| 5 | Exportierte Caches merken | Ja, serverseitig je Link; anzeigen und nicht vorausgewählt, aber manuell wieder wählbar (zunächst „deaktivieren", nach Browser-Test geändert) | 2026-11-01 |
 | 6 | Link verlängerbar | Nein | 2026-11-01 |
 | 7 | Vorab Caches abwählen | Nein, Gast wählt selbst | 2026-11-01 |

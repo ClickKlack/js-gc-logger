@@ -378,13 +378,14 @@ final class Db
         return $out;
     }
 
-    /** Download über den Link: Caches als exportiert merken, Download zählen. */
+    /** Download über den Link: Caches als exportiert merken (Datum = letzter Export), Download zählen. */
     public function markExported(int $shareId, array $cacheIds): void
     {
         $now = self::utcNow();
         $this->pdo->beginTransaction();
         try {
-            $ins = $this->pdo->prepare('INSERT OR IGNORE INTO share_export (share_id, cache_id, exported_at) VALUES (?, ?, ?)');
+            $ins = $this->pdo->prepare('INSERT INTO share_export (share_id, cache_id, exported_at) VALUES (?, ?, ?)
+                                        ON CONFLICT(share_id, cache_id) DO UPDATE SET exported_at = excluded.exported_at');
             foreach ($cacheIds as $cid) {
                 $ins->execute([$shareId, (int) $cid, $now]);
             }

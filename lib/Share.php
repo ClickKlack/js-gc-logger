@@ -15,13 +15,13 @@ final class Share
     public const MAX_TEMPLATE = 4000;
 
     private const VIEW_CACHE_FIELDS = ['id', 'code', 'name', 'type', 'log_type', 'ts', 'estimated', 'text',
-        'companion_logged', 'exported_at', 'selected', 'locked'];
+        'companion_logged', 'exported_at', 'selected'];
     private const VIEW_TOUR_FIELDS = ['id', 'tour_date', 'title', 'mitcacher'];
 
     /**
      * Touren der Freigabe (neueste zuerst) mit Kandidaten je Cache: wie beim Export für
-     * einen Begleiter, dazu Typ, exported_at und locked (schon über diesen Link exportiert
-     * → nicht mehr wählbar).
+     * einen Begleiter, dazu Typ und exported_at (schon über diesen Link exportiert → nicht
+     * vorausgewählt, aber wieder wählbar).
      * @param array<string,mixed> $share Ergebnis von Db::findShare
      * @return list<array<string,mixed>> je Tour: id, tour_date, title, mitcacher, caches
      */
@@ -40,8 +40,7 @@ final class Share
             foreach ($caches as &$c) {
                 $c['type']        = (string) ($types[$c['id']] ?? '');
                 $c['exported_at'] = $exported[$c['id']] ?? null;
-                $c['locked']      = $c['exported_at'] !== null;
-                $c['selected']    = $c['selected'] && !$c['locked'];
+                $c['selected']    = $c['selected'] && $c['exported_at'] === null;
             }
             unset($c);
             $out[] = [
@@ -70,7 +69,8 @@ final class Share
     }
 
     /**
-     * Einträge für die Draft-Datei: gewählte, wählbare Caches mit Text.
+     * Einträge für die Draft-Datei: gewählte Caches der Freigabe mit Text (auch schon
+     * exportierte — erneuter Download ist erlaubt).
      * @param list<array<string,mixed>> $tours Ergebnis von tours()
      * @param list<int> $ids
      * @return list<array<string,mixed>>
@@ -80,7 +80,7 @@ final class Share
         $out = [];
         foreach ($tours as $t) {
             foreach ($t['caches'] as $c) {
-                if (in_array($c['id'], $ids, true) && $c['available'] && !$c['locked'] && trim($c['text']) !== '') {
+                if (in_array($c['id'], $ids, true) && $c['available'] && trim($c['text']) !== '') {
                     $out[] = $c;
                 }
             }

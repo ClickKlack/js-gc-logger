@@ -260,6 +260,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .share-item .share-url { width: 100%; margin-top: 8px; font-size: 13px; font-family: ui-monospace, monospace; }
 .share-item .row { margin-top: 8px; }
 .share-item .row .ghost { flex: 1 1 auto; }
+.share-group { margin-top: 14px; }
+.export-item.exported:not(:has(input:checked)) { opacity: .7; }
+.share-group h3 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.share-group .group-actions { margin-top: 6px; }
+.share-group .group-actions .ghost { min-height: 36px; padding: 4px 14px; font-size: 14px; }
 .export-preview { white-space: pre-wrap; font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 300px; overflow: auto; }
 .estimated { font-style: italic; }
 .ph-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
