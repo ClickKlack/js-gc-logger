@@ -88,6 +88,31 @@ register_shutdown_function(static function (): void {
     }
 });
 
+/** Inhalt der hochgeladenen GPX-Datei (Feld "gpx"). */
+function gpx_upload(): string
+{
+    if (!isset($_FILES['gpx']) || $_FILES['gpx']['error'] !== UPLOAD_ERR_OK) {
+        fail('Keine GPX-Datei empfangen.');
+    }
+    return (string) file_get_contents($_FILES['gpx']['tmp_name']);
+}
+
+/** JSON-Objekt aus einem POST-Feld (z. B. "fields"). */
+function post_json(string $key): array
+{
+    $v = json_decode((string) ($_POST[$key] ?? ''), true);
+    return is_array($v) ? $v : [];
+}
+
+/** DB für Aktionen, die Speichern voraussetzen. */
+function storage_db(array $config): Db
+{
+    if (empty($config['store_logs'])) {
+        fail('Speichern ist in der Konfiguration deaktiviert.');
+    }
+    return new Db((string) $config['db_path']);
+}
+
 $action = (string) ($_POST['action'] ?? $_GET['action'] ?? '');
 dbg_log('Action: ' . ($action !== '' ? $action : '(leer)'));
 
@@ -113,12 +138,63 @@ try {
 
     switch ($action) {
         case 'upload_gpx': {
-            if (!isset($_FILES['gpx']) || $_FILES['gpx']['error'] !== UPLOAD_ERR_OK) {
-                fail('Keine GPX-Datei empfangen.');
-            }
-            $xml    = (string) file_get_contents($_FILES['gpx']['tmp_name']);
+            // Nur parsen + Wiedererkennung prüfen; angelegt wird mit create_tour.
+            $xml    = gpx_upload();
             $caches = Gpx::parse($xml);
-            respond(['ok' => true, 'caches' => $caches]);
+            $match  = !empty($config['store_logs'])
+                ? (new Db((string) $config['db_path']))->findMatch($caches)
+                : ['type' => 'none'];
+            respond(['ok' => true, 'caches' => $caches, 'match' => $match]);
+        }
+
+        case 'create_tour': {
+            // mode: new (Default) | add (neue Caches an tour_id anhängen) | refresh (nur GPX-Felder auffrischen)
+            $db     = storage_db($config);
+            $xml    = gpx_upload();
+            $caches = Gpx::parse($xml);
+            $mode   = (string) ($_POST['mode'] ?? 'new');
+            $added  = 0;
+            if ($mode === 'new') {
+                $id = $db->createTour($caches, $xml, post_json('meta'));
+            } elseif ($mode === 'add' || $mode === 'refresh') {
+                $id = (int) ($_POST['tour_id'] ?? 0);
+                if ($db->getTour($id) === null) {
+                    fail('Tour nicht gefunden.', 404);
+                }
+                $added = $db->mergeGpx($id, $caches, $xml, $mode === 'add');
+            } else {
+                fail('Unbekannter Modus.');
+            }
+            respond(['ok' => true, 'tour' => $db->getTour($id), 'added' => $added]);
+        }
+
+        case 'update_tour': {
+            $db = storage_db($config);
+            $updatedAt = $db->updateTour((int) ($_POST['id'] ?? 0), post_json('fields'));
+            if ($updatedAt === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            respond(['ok' => true, 'updated_at' => $updatedAt]);
+        }
+
+        case 'update_cache': {
+            $db  = storage_db($config);
+            $res = $db->updateCache((int) ($_POST['id'] ?? 0), post_json('fields'));
+            if ($res === null) {
+                fail('Cache nicht gefunden.', 404);
+            }
+            respond(['ok' => true] + $res);
+        }
+
+        case 'reorder': {
+            $db  = storage_db($config);
+            $ids = json_decode((string) ($_POST['ids'] ?? '[]'), true);
+            try {
+                $updatedAt = $db->reorder((int) ($_POST['tour_id'] ?? 0), is_array($ids) ? $ids : []);
+            } catch (InvalidArgumentException $e) {
+                fail($e->getMessage());
+            }
+            respond(['ok' => true, 'updated_at' => $updatedAt]);
         }
 
         case 'generate_context': {
