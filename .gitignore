@@ -1,6 +1,7 @@
 # Secrets & lokale Daten — niemals committen
 config.php
 data/
+backups/
 local_scripts/
 *.sqlite
 *.sqlite-journal
