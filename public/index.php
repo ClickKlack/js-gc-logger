@@ -19,7 +19,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=9">
+    <link rel="stylesheet" href="assets/style.css?v=12">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -27,7 +27,10 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <h1>🧭 Log-Helfer</h1>
     <?php if ($authed): ?>
         <span id="save-indicator" class="save-indicator hidden" aria-live="polite"></span>
-        <button id="btn-logout" class="link" type="button">Abmelden</button>
+        <?php if ($storeLogs): ?>
+            <button id="btn-nav-tours" class="ghost icon-btn" type="button" title="Meine Touren" aria-label="Meine Touren">🗂<span class="btn-text"> Meine Touren</span></button>
+        <?php endif; ?>
+        <button id="btn-logout" class="ghost icon-btn" type="button" title="Abmelden" aria-label="Abmelden">🚪<span class="btn-text"> Abmelden</span></button>
     <?php endif; ?>
 </header>
 
@@ -49,12 +52,14 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <section id="view-app" class="view<?= $authed ? '' : ' hidden' ?>">
 
         <?php if ($storeLogs): ?>
-        <!-- Gespeicherte Tour öffnen (ohne GPX-Upload) -->
-        <section id="step-load" class="card">
-            <h2>Gespeicherte Tour öffnen</h2>
-            <button id="btn-load-tours" class="secondary" type="button">Meine Touren anzeigen</button>
+        <!-- Meine Touren: eigene Ansicht, schließt die Tour-Bearbeitung aus -->
+        <section id="view-tours" class="card hidden">
+            <h2>Meine Touren</h2>
+            <div class="row">
+                <button id="btn-tours-new" class="primary" type="button">＋ Neue Tour</button>
+            </div>
             <p id="load-status" class="muted"></p>
-            <ul id="tour-list-top" class="tour-list hidden"></ul>
+            <ul id="tour-list" class="tour-list"></ul>
         </section>
         <?php endif; ?>
 
@@ -142,11 +147,10 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             <h2>4 · Touren</h2>
             <p class="muted">Alles wird automatisch gespeichert – Status oben rechts.</p>
             <div class="row">
-                <button id="btn-tours" class="link" type="button">Meine Touren</button>
-                <button id="btn-new" class="link" type="button">Neue Tour</button>
+                <button id="btn-tours" class="ghost" type="button">🗂 Meine Touren</button>
+                <button id="btn-new" class="ghost" type="button">＋ Neue Tour</button>
             </div>
             <p id="save-status" class="muted"></p>
-            <ul id="tour-list" class="tour-list hidden"></ul>
         </section>
 
         <!-- Debug (nur wenn in config.php aktiviert) -->
@@ -156,7 +160,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             <p class="muted">Aktiv via <code>config.php</code> (<code>'debug' =&gt; true</code>). Für den Live-Betrieb wieder ausschalten.</p>
             <div class="row">
                 <button id="btn-debuglog" class="secondary" type="button">Log anzeigen</button>
-                <button id="btn-debugclear" class="link" type="button">Log leeren</button>
+                <button id="btn-debugclear" class="ghost" type="button">Log leeren</button>
             </div>
             <pre id="debug-out" class="debug-out"></pre>
         </section>
@@ -171,6 +175,6 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=9"></script>
+<script src="assets/app.js?v=13"></script>
 </body>
 </html>

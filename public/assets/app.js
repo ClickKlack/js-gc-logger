@@ -656,6 +656,34 @@ function nextOpenIndex(from) {
 
 /* ---------- Schritt 4: Touren ---------- */
 
+// Abschnitte der Tour-Bearbeitung (nie gleichzeitig mit „Meine Touren" sichtbar)
+const TOUR_SECTIONS = ['#step-setup', '#step-context', '#step-caches', '#step-save'];
+
+function showToursView() {
+  flushEdits();
+  TOUR_SECTIONS.forEach((sel) => hide($(sel)));
+  show($('#view-tours'));
+  window.scrollTo(0, 0);
+  fetchAndRenderTours($('#tour-list'), $('#load-status'));
+}
+
+// Tour schließen: Zustand, gemerkte Position und lokalen Entwurf verwerfen
+function closeTour() {
+  clearTimeout(saver.timer);
+  saver.timer = null;
+  saver.failed = false;
+  if (state.tourId) storageDel(draftKey(state.tourId));
+  storageDel(LAST_KEY);
+  Object.assign(state, { caches: [], tourInfo: '', companions: [], context: '', current: -1, tourId: null });
+  renderSaveIndicator();
+}
+
+function startNewTour() {
+  flushEdits();
+  storageDel(LAST_KEY);
+  location.reload();
+}
+
 async function fetchAndRenderTours(ul, statusEl) {
   if (statusEl) statusEl.textContent = 'Lade Touren …';
   try {
@@ -666,9 +694,11 @@ async function fetchAndRenderTours(ul, statusEl) {
     }
     tours.forEach((t) => {
       const li = document.createElement('li');
-      li.className = 'tour-item';
+      const active = t.id === state.tourId;
+      li.className = 'tour-item' + (active ? ' active' : '');
       li.innerHTML =
         '<span class="tour-info">' +
+          (active ? '<span class="badge-active">● geöffnet</span><br>' : '') +
           '<b>#' + t.id + '</b> ' + escapeHtml(t.title || 'Tour') +
           ' <span class="muted">(' + t.done_count + '/' + t.cache_count + ' · ' +
           escapeHtml(t.created_at || '') + ')</span>' +
@@ -680,6 +710,8 @@ async function fetchAndRenderTours(ul, statusEl) {
           if (!confirm('Tour #' + t.id + ' "' + (t.title || 'Tour') + '" wirklich löschen?')) return;
           try {
             await api('delete_tour', { id: String(t.id) });
+            if (t.id === state.tourId) closeTour();
+            else storageDel(draftKey(t.id));
             fetchAndRenderTours(ul, statusEl); // Liste neu laden
           } catch (ex) {
             if (statusEl) statusEl.textContent = 'Fehler: ' + ex.message;
@@ -697,9 +729,9 @@ async function fetchAndRenderTours(ul, statusEl) {
   }
 }
 
-// Liste im Start-Screen (oben) und im Schritt 4 (unten)
-$('#btn-load-tours')?.addEventListener('click', () => fetchAndRenderTours($('#tour-list-top'), $('#load-status')));
-$('#btn-tours')?.addEventListener('click', () => fetchAndRenderTours($('#tour-list'), $('#save-status')));
+$('#btn-nav-tours')?.addEventListener('click', showToursView);
+$('#btn-tours')?.addEventListener('click', showToursView);
+$('#btn-tours-new')?.addEventListener('click', startNewTour);
 
 function loadTourIntoState(tour) {
   if (state.tourId && state.tourId !== tour.id) flushEdits();   // offene Edits der alten Tour noch senden
@@ -725,9 +757,7 @@ async function openTour(id, opts = {}) {
     setCompanionsUI(state.companions);
     $('#context-text').value = state.context;
 
-    const sl = $('#step-load'); if (sl) hide(sl);
-    hide($('#tour-list'));
-    hide($('#tour-list-top'));
+    const vt = $('#view-tours'); if (vt) hide(vt);
     if (state.context.trim()) {
       // Kontext steht schon: direkt zu den Caches
       hide($('#step-setup'));
@@ -739,6 +769,7 @@ async function openTour(id, opts = {}) {
       selectCache(idx);
     } else {
       // Tour noch in der Einrichtung (vor „Kontext erzeugen")
+      TOUR_SECTIONS.forEach((sel) => hide($(sel)));
       show($('#step-setup'));
       $('#btn-context').disabled = false;
       $('#gpx-status').textContent = 'Tour #' + tour.id + ' (' + state.caches.length + ' Caches) – Tour-Infos ergänzen, dann Kontext erzeugen.';
@@ -757,11 +788,7 @@ async function openTour(id, opts = {}) {
   }
 }
 
-$('#btn-new')?.addEventListener('click', async () => {
-  await flushEdits();
-  storageDel(LAST_KEY);
-  location.reload();
-});
+$('#btn-new')?.addEventListener('click', startNewTour);
 
 // Beim Start an der letzten Stelle weitermachen
 if (document.body.dataset.authed === '1' && window.GC_STORE) {

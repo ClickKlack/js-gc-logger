@@ -47,8 +47,16 @@ body {
   top: 0;
   z-index: 10;
 }
-.topbar h1 { font-size: 18px; margin: 0; }
-.save-indicator { margin-left: auto; margin-right: 12px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.topbar h1 { font-size: 18px; margin: 0 auto 0 0; white-space: nowrap; }
+.topbar { gap: 10px; }
+.topbar button { white-space: nowrap; }
+.topbar .icon-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; min-width: 40px;
+  padding: 6px 10px; font-size: 18px; line-height: 1; justify-content: center; }
+.topbar .icon-btn .btn-text { font-size: 15px; }
+@media (max-width: 560px) {
+  .topbar .icon-btn .btn-text { display: none; }   /* nur Symbole: Platz für Speicheranzeige */
+}
+.save-indicator { font-size: 13px; color: var(--muted); white-space: nowrap; }
 .save-indicator.warn { color: var(--error); font-weight: 600; }
 
 .wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
@@ -98,13 +106,12 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 
 .primary   { background: var(--primary);   color: var(--primary-ink); width: 100%; }
 .secondary { background: var(--secondary);  color: #fff; }
-.link {
-  background: transparent;
-  color: var(--secondary);
-  padding: 8px 6px;
-  min-height: auto;
-  text-decoration: underline;
+.ghost {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
 }
+.ghost:hover { border-color: var(--secondary); }
 
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
 .row .primary { flex: 1 1 auto; width: auto; }
@@ -204,6 +211,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   cursor: pointer;
 }
 .tour-item .tour-info { flex: 1 1 auto; }
+.tour-item.active { border-color: var(--primary); }
+.tour-item .badge-active { font-size: 12px; color: var(--primary); font-weight: 600; }
 .tour-del {
   flex: 0 0 auto;
   min-height: 38px;
