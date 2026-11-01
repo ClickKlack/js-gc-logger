@@ -14,3 +14,5 @@ local_scripts/
 .DS_Store
 .idea/
 .vscode/
+spec/ideas.md
+spec/*.txt

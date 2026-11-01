@@ -9,7 +9,7 @@ Cache für Cache ein fertiges Log mit Kopier-Button.
   Rate-Limits).
 - **Speicherung:** optional via SQLite.
 
-Vollständige Spezifikation: siehe [`SPEC.md`](SPEC.md).
+Vollständige Spezifikation: siehe [`spec/SPEC.md`](spec/SPEC.md).
 
 ## Einrichtung in 5 Schritten
 

@@ -6,7 +6,8 @@ halten.
 ## Was das ist
 
 Mobil-first Web-Tool zum Schreiben von Geocaching-Logs mit KI-Unterstützung. Läuft auf
-Hetzner Shared-Hosting (PHP). Siehe `SPEC.md` für die vollständige Spezifikation.
+Hetzner Shared-Hosting (PHP). Siehe `spec/SPEC.md` für die vollständige Spezifikation
+(Erweiterungen: `spec/spec-v2.md`).
 
 ## Stack & Konventionen
 
