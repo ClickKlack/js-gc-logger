@@ -28,18 +28,22 @@ config.example.php   Vorlage für config.php (Key, Modell, Passwort-Hash, DB-Pfa
 schema.sql           SQLite-Schema (idempotent, CREATE TABLE IF NOT EXISTS)
 lib/                 Backend-Klassen (außerhalb des Web-Roots)
   bootstrap.php      lädt config.php + alle Klassen, gibt $config zurück
-  Auth.php           Session-Passwortschutz
-  Gpx.php            GPX-Parser (SimpleXML, Groundspeak-Extensions)
+  Auth.php           Passwortschutz: Session + „angemeldet bleiben"-Token je Gerät
+  Gpx.php            GPX-Parser (Groundspeak/gsak; eigenes + Begleiter-Logs, nie GcNote)
+  FieldNotes.php     Import c:geo-Feldnotizen (UTF-16, CSV-artig, Nummernzeile)
+  FieldNotesExport.php Draft-Datei für geocaching.com (c:geo-Format, Vorlagen)
+  GpxExport.php      GPX-Export (Caches + eigene Logs)
   Gemini.php         REST-Client (cURL) für generateContent
   Prompts.php        System-Instruction + Stufe-1/2-Templates
   BatchLogs.php      Sammel-Antwort auswerten (abgeschnittenes JSON, Müll-Filter)
-  Db.php             SQLite via PDO
+  Db.php             SQLite via PDO, Migrationen, Backups, Abfragen
 public/              Web-Root (docroot hierauf setzen, falls möglich)
   index.php          App-Shell + Login-Gate, rendert serverseitig den Auth-Status
   api.php            JSON-Router (POST-Actions)
   assets/app.js      Frontend-Logik (State-Maschine)
   assets/style.css   Mobile-first Styles
 tests/smoke.php      CLI-Smoketests (php tests/smoke.php), nur auf Temp-Kopie der DB
+tests/auth_probe.php Hilfsprozess für die Login-Tests
 ```
 
 ## Datenbank
@@ -49,6 +53,15 @@ tests/smoke.php      CLI-Smoketests (php tests/smoke.php), nur auf Temp-Kopie de
   `PRAGMA user_version`; vor jeder Migration einer bestehenden DB wird automatisch
   gesichert (`data/backup/`, letzte 3, `VACUUM INTO`).
 - WAL-Modus ist aktiv (`*.sqlite-wal`/`-shm` neben der DB sind normal).
+- Frontend speichert automatisch (localStorage sofort, API feldweise per Debounce:
+  `update_tour`/`update_cache`/`reorder`); es gibt keinen Speichern-Button.
+
+## Field-Notes-Export
+
+- Format exakt wie c:geo (UTF-16 LE ohne BOM, LF, UTC, neuester zuerst). Einzige
+  Abweichung: leere Zeilen werden mit U+200B gefüllt, sonst verwirft der Draft-Import von
+  geocaching.com sie (Upload-Test 01.11.2026, siehe spec-v2 F6).
+- Änderungen am Format nur mit erneutem Test-Upload unter Drafts → Upload.
 
 ## Lokal testen
 
