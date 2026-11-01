@@ -65,7 +65,7 @@ final class FieldNotes
     }
 
     /** Bytes → UTF-8-String (BOM bzw. Null-Byte-Muster erkennen). */
-    private static function decode(string $raw): string
+    public static function decode(string $raw): string
     {
         if (str_starts_with($raw, "\xFF\xFE")) {
             return mb_convert_encoding(substr($raw, 2), 'UTF-8', 'UTF-16LE');
@@ -99,7 +99,7 @@ final class FieldNotes
      * trennt Einträge, "" in Quotes ist ein ".
      * @return list<list<string>>
      */
-    private static function records(string $text): array
+    public static function records(string $text): array
     {
         $records = [];
         $fields  = [];

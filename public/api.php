@@ -214,6 +214,42 @@ try {
             respond(['ok' => true, 'tour' => $db->getTour($tourId)]);
         }
 
+        case 'export_preview': {
+            // Kandidaten für die Draft-Datei (Vorschau + Auswahl im Dialog)
+            $db   = storage_db($config);
+            $tour = $db->getTour((int) ($_POST['tour_id'] ?? 0));
+            if ($tour === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            respond(['ok' => true, 'caches' => FieldNotesExport::candidatesForMe($tour)]);
+        }
+
+        case 'export_fieldnotes': {
+            // Draft-Datei herunterladen: nur die gewählten Caches mit Log
+            $db   = storage_db($config);
+            $tour = $db->getTour((int) ($_POST['tour_id'] ?? 0));
+            if ($tour === null) {
+                fail('Tour nicht gefunden.', 404);
+            }
+            $ids     = array_map('intval', (array) (json_decode((string) ($_POST['ids'] ?? '[]'), true) ?: []));
+            $entries = array_values(array_filter(
+                FieldNotesExport::candidatesForMe($tour),
+                static fn (array $c): bool => $c['available'] && in_array($c['id'], $ids, true)
+            ));
+            if ($entries === []) {
+                fail('Keine Caches mit Log ausgewählt.');
+            }
+            $bytes = FieldNotesExport::build($entries);
+            if (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            header('Content-Type: text/plain; charset=UTF-16LE');
+            header('Content-Disposition: attachment; filename="' . FieldNotesExport::filename($tour) . '"');
+            header('Content-Length: ' . strlen($bytes));
+            echo $bytes;
+            exit;
+        }
+
         case 'update_tour': {
             $db = storage_db($config);
             try {

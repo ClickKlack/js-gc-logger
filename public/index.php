@@ -19,7 +19,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=25">
+    <link rel="stylesheet" href="assets/style.css?v=26">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -213,10 +213,33 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             <h2>4 · Touren</h2>
             <p class="muted">Alles wird automatisch gespeichert – Status oben rechts.</p>
             <div class="row">
+                <button id="btn-export" class="ghost" type="button">📤 Field Notes</button>
                 <button id="btn-tours" class="ghost" type="button">🗂 Meine Touren</button>
                 <button id="btn-new" class="ghost" type="button">＋ Neue Tour</button>
             </div>
             <p id="save-status" class="muted"></p>
+        </section>
+
+        <!-- Field-Notes-Export (Draft-Datei für geocaching.com) -->
+        <section id="step-export" class="card hidden">
+            <h2>📤 Field Notes exportieren</h2>
+            <p class="muted">Erzeugt <code>geocache_visits_DATUM_tourNR.txt</code> für geocaching.com → <b>Drafts</b> → Upload (gleiches Format wie c:geo).</p>
+            <label>Empfänger
+                <select id="export-recipient">
+                    <option value="me">Ich (KI-Logs)</option>
+                </select>
+            </label>
+            <p id="export-summary" class="muted"></p>
+            <ul id="export-list" class="export-list"></ul>
+            <details class="listing-wrap">
+                <summary>Vorschau der ersten Einträge</summary>
+                <pre id="export-preview" class="export-preview"></pre>
+            </details>
+            <div class="row">
+                <button id="btn-export-download" class="primary" type="button">⬇ Datei herunterladen</button>
+                <button id="btn-export-close" class="ghost" type="button">Schließen</button>
+            </div>
+            <p id="export-status" class="muted"></p>
         </section>
 
         <!-- Debug (nur wenn in config.php aktiviert) -->
@@ -241,6 +264,6 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=30"></script>
+<script src="assets/app.js?v=33"></script>
 </body>
 </html>

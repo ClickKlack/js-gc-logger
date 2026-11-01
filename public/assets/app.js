@@ -975,7 +975,7 @@ function placeTourFields(inContext) {
 }
 
 // Abschnitte der Tour-Bearbeitung (nie gleichzeitig mit „Meine Touren" sichtbar)
-const TOUR_SECTIONS = ['#step-setup', '#step-context', '#step-caches', '#step-save'];
+const TOUR_SECTIONS = ['#step-setup', '#step-context', '#step-caches', '#step-save', '#step-export'];
 
 function showToursView() {
   flushEdits();
@@ -1222,6 +1222,101 @@ async function openTour(id, opts = {}) {
 
 $('#btn-new')?.addEventListener('click', startNewTour);
 
+
+/* ---------- Field-Notes-Export (Draft-Datei für geocaching.com) ---------- */
+
+let exportCaches = [];
+
+$('#btn-export')?.addEventListener('click', openExport);
+$('#btn-export-close')?.addEventListener('click', () => hide($('#step-export')));
+
+async function openExport() {
+  if (!state.tourId) return;
+  // alte Liste (ggf. andere Tour) sofort leeren
+  exportCaches = [];
+  $('#export-list').innerHTML = '';
+  $('#export-summary').textContent = '';
+  $('#export-preview').textContent = '';
+  show($('#step-export'));
+  $('#step-export').scrollIntoView();
+  $('#export-status').textContent = 'Lade …';
+  try {
+    await flushEdits();
+    exportCaches = (await api('export_preview', { tour_id: String(state.tourId) })).caches;
+    renderExport();
+    $('#export-status').textContent = '';
+  } catch (ex) {
+    $('#export-status').textContent = 'Fehler: ' + ex.message;
+  }
+}
+
+function renderExport() {
+  const ul = $('#export-list');
+  ul.innerHTML = '';
+  exportCaches.forEach((c) => {
+    const li = document.createElement('li');
+    li.className = 'export-item' + (c.available ? '' : ' unavailable');
+    const t = berlinParts(c.ts);
+    const parts = [
+      '<span class="' + (c.estimated ? 'estimated' : '') + '">' + (c.estimated ? '~' : '') + '<b>' + escapeHtml(t.time) + '</b> '
+        + escapeHtml(formatDate(t.date).slice(0, 6)) + (c.estimated ? ' (geschätzt)' : '') + '</span>',
+      statusBadge(c.log_type),
+    ];
+    if (!c.available) parts.push('<span class="no-note">kein Log</span>');
+    if (c.already) parts.push('✍️ schon geloggt');
+    if (c.double_find) parts.push('<span class="dup-label warn">⚠ Doppelfund?</span>');
+    li.innerHTML = '<input type="checkbox"' + (c.selected ? ' checked' : '') + (c.available ? '' : ' disabled')
+        + ' aria-label="' + escapeHtml(c.name) + ' exportieren">'
+      + '<span class="x-main"><b>' + escapeHtml(c.name) + '</b> <span class="muted">' + escapeHtml(c.code) + '</span>'
+      + '<span class="x-sub">' + parts.map((p) => '<span class="part">' + p + '</span>').join(' · ') + '</span></span>';
+    li.querySelector('input').addEventListener('change', (e) => { c.selected = e.target.checked; renderExportSummary(); });
+    ul.appendChild(li);
+  });
+  renderExportSummary();
+}
+
+function renderExportSummary() {
+  const sel = exportCaches.filter((c) => c.selected && c.available);
+  const est = sel.filter((c) => c.estimated).length;
+  $('#export-summary').textContent = sel.length + ' von ' + exportCaches.length + ' Caches ausgewählt'
+    + (est ? ' · ' + est + ' ohne Uhrzeit (geschätzt ab 10:00, je 10 Min.)' : '');
+  $('#btn-export-download').disabled = sel.length === 0;
+  // Vorschau: so wie in der Datei (neuester zuerst), die ersten zwei
+  const lines = [...sel].sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 2)
+    .map((c) => c.code + ',' + c.ts + ',' + c.log_type + ',"' + c.text.replace(/"/g, '""') + '"');
+  $('#export-preview').textContent = lines.length ? lines.join('\n\n') : '(nichts ausgewählt)';
+}
+
+$('#btn-export-download')?.addEventListener('click', async () => {
+  const ids = exportCaches.filter((c) => c.selected && c.available).map((c) => c.id);
+  const status = $('#export-status');
+  status.textContent = 'Erzeuge Datei …';
+  try {
+    const body = new FormData();
+    body.append('action', 'export_fieldnotes');
+    body.append('tour_id', String(state.tourId));
+    body.append('recipient', $('#export-recipient').value);
+    body.append('ids', JSON.stringify(ids));
+    const res = await fetch('api.php', { method: 'POST', body });
+    if ((res.headers.get('Content-Type') || '').includes('application/json')) {
+      const j = await res.json();
+      throw new Error(j.error || 'Unbekannter Fehler.');
+    }
+    const blob = await res.blob();
+    // Dateiname vom Server (Datum + Tour-Nummer)
+    const name = (/filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '') || [])[1] || 'geocache_visits.txt';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    status.textContent = '✓ ' + ids.length + ' Einträge exportiert (' + name + '). Jetzt bei geocaching.com unter Drafts → Upload hochladen.';
+  } catch (ex) {
+    status.textContent = 'Fehler: ' + ex.message;
+  }
+});
 
 /* ---------- Debug (nur wenn in config.php aktiviert) ---------- */
 

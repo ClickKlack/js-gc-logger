@@ -335,6 +335,13 @@ Clicki17 — gilt aber für **jeden** Mitcacher) die Caches der Tour schnell nac
   - Log-Typ englisch: `Found it`, `Didn't find it`, `Write note`, …
   - Log-Text in Anführungszeichen, mehrzeilig erlaubt; innere `"` verdoppelt (Verhalten
     von c:geo bei `"` im Text noch prüfen).
+  - [E] **Leerzeilen:** Der Draft-Import von geocaching.com verwirft leere Zeilen (Absätze
+    kleben zusammen). Test-Upload 01.11.2026 mit vier Varianten: nur eine Zeile mit
+    **Null-Breite-Leerzeichen (U+200B)** bleibt als Leerzeile erhalten; geschütztes
+    Leerzeichen (U+00A0), CRLF und `&nbsp;` nicht (letzteres erscheint wörtlich). ⇒ Leere
+    Zeilen im Text werden beim Export mit U+200B gefüllt — einzige Abweichung vom c:geo-Format.
+  - [E] Dateiname mit Tour-Datum und -Nummer, z. B. `geocache_visits_2026-10-31_tour45.txt`
+    (für geocaching.com ist nur der Inhalt maßgeblich).
 
 > **⚠ Vor dem Commit der Export-Funktion (Pflicht-Abnahme):**
 > 1. Erzeugte Datei byteweise mit einer c:geo-Feldnotizen-Datei vergleichen (Kodierung,
@@ -466,3 +473,5 @@ Drei Ebenen:
 | 33 | Sortierschlüssel | Zeitstempel vor Fundnummer (Zeit wird bei nachgetragenen Logs angepasst) | 2026-11-01 |
 | 34 | Caches ohne Feldnotiz | Test ausstehend, ob DNF/Notiz mitexportiert werden; vorläufig ans Ende | 2026-11-01 |
 | 35 | Test DNF/Notiz | Alle Log-Typen kommen in den Feldnotizen an; Fundnummer bei DNF/Notiz nicht hochgezählt → Zeitstempel sortiert | 2026-11-01 |
+| 36 | Leerzeilen im Draft-Upload | gc.com verwirft leere Zeilen; Füllung mit U+200B (einzige funktionierende Variante im Test) | 2026-11-01 |
+| 37 | Export-Dateiname | Mit Tour-Datum und Tour-Nummer | 2026-11-01 |

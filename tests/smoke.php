@@ -14,7 +14,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $root = dirname(__DIR__);
-foreach (['Auth', 'Gpx', 'FieldNotes', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
+foreach (['Auth', 'Gpx', 'FieldNotes', 'FieldNotesExport', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
     require $root . '/lib/' . $cls . '.php';
 }
 
@@ -611,6 +611,71 @@ check('Seite 2: Rest, keine Überschneidung', count($p2['tours']) === 5
 check('Seite außerhalb → letzte Seite', $db10->listToursPage([], 9)['page'] === 2 && $db10->listToursPage([], 0)['page'] === 1);
 $pq = $db10->listToursPage(['q' => 'Seite'], 2);
 check('Freitext-Filter vor dem Blättern', $pq['total'] === 22 && count($pq['tours']) === 2);
+
+// ---------------------------------------------------------------------------
+section('Field-Notes-Export für mich (Schritt 11)');
+
+foreach (['20261101125653.txt', '20261101130803.txt'] as $fnName) {
+    $fnFile = $root . '/spec/' . $fnName;
+    if (!is_file($fnFile)) {
+        skip('c:geo-Datei fehlt: ' . $fnName);
+        continue;
+    }
+    // Rundlauf: c:geo-Datei zerlegen und neu schreiben → byte-identisch bis auf die
+    // gewollte Abweichung (leere Zeilen im Text → U+200B, sonst verwirft gc.com sie)
+    $orig = (string) file_get_contents($fnFile);
+    $recs = FieldNotes::records(FieldNotes::decode($orig));
+    $ents = array_map(static fn (array $r): array => ['code' => $r[0], 'ts' => $r[1], 'log_type' => $r[2], 'text' => $r[3]], $recs);
+    shuffle($ents);   // Eingangsreihenfolge egal, Ausgabe sortiert wie c:geo
+    $mine     = FieldNotesExport::build($ents);
+    $expected = mb_convert_encoding(str_replace("\n\n", "\n\u{200B}\n", mb_convert_encoding($orig, 'UTF-8', 'UTF-16LE')), 'UTF-16LE', 'UTF-8');
+    check("$fnName: Export byte-identisch zu c:geo (bis auf Leerzeilen-Füllung)", $mine === $expected, 'Längen ' . strlen($mine) . ' vs ' . strlen($expected));
+}
+
+$out = FieldNotesExport::build([
+    ['code' => 'gc1abc', 'ts' => '2026-10-31T09:00:00Z', 'log_type' => 'Found it', 'text' => "Zeile 1\r\nZeile 2 mit \"Zitat\" 😀 Ümlaut"],
+    ['code' => 'GC2DEF', 'ts' => '2026-10-31T10:00:00Z', 'log_type' => "Didn't find it", 'text' => 'kurz'],
+]);
+check('kein BOM, UTF-16 LE', substr($out, 0, 2) === "G\0");
+$txt = mb_convert_encoding($out, 'UTF-8', 'UTF-16LE');
+check('neuester zuerst, LF am Ende, kein CR', str_starts_with($txt, 'GC2DEF,2026-10-31T10:00:00Z,Didn\'t find it,"kurz"' . "\n")
+    && str_ends_with($txt, "\"\n") && !str_contains($txt, "\r"));
+check('" verdoppelt, Code groß, Emoji/Umlaut erhalten', str_contains($txt, 'GC1ABC,2026-10-31T09:00:00Z,Found it,"Zeile 1' . "\n" . 'Zeile 2 mit ""Zitat"" 😀 Ümlaut"'));
+$back = FieldNotes::records(FieldNotes::decode($out));
+check('Leerzeilen: innen U+200B, Ränder weg, mehrere bleiben mehrere',
+    FieldNotesExport::keepBlankLines("\n\nA\n\nB\r\n \r\n\r\nC\n\n") === "A\n\u{200B}\nB\n\u{200B}\n\u{200B}\nC");
+check('Rundlauf über Import-Parser', $back[1][3] === "Zeile 1\nZeile 2 mit \"Zitat\" 😀 Ümlaut" && $back[0][0] === 'GC2DEF');
+
+// Geschätzte Zeiten: ab 10:00 Ortszeit, 10-min-Schritte, je Tag neu; Sommer-/Winterzeit
+$sched = FieldNotesExport::schedule([
+    ['visited_at' => '2026-10-24', 'visited_ts' => null],
+    ['visited_at' => '2026-10-24', 'visited_ts' => '2026-10-24T13:33:00Z'],
+    ['visited_at' => '2026-10-24', 'visited_ts' => null],
+    ['visited_at' => '2026-10-25', 'visited_ts' => null],
+    ['visited_at' => null, 'visited_ts' => null],
+], '2026-11-01');
+check('geschätzt: 10:00 MESZ = 08:00Z, nächster 10:10', $sched[0] === ['ts' => '2026-10-24T08:00:00Z', 'estimated' => true]
+    && $sched[2]['ts'] === '2026-10-24T08:10:00Z');
+check('echte Uhrzeit bleibt, nicht geschätzt', $sched[1] === ['ts' => '2026-10-24T13:33:00Z', 'estimated' => false]);
+check('neuer Tag nach Zeitumstellung: 10:00 MEZ = 09:00Z', $sched[3]['ts'] === '2026-10-25T09:00:00Z');
+check('ohne Datum → Tour-Datum', $sched[4]['ts'] === '2026-11-01T09:00:00Z');
+
+// Kandidaten aus einer Tour
+$db11 = new Db(tmpdir() . '/e.sqlite');
+$t11  = $db11->createTour([
+    ['code' => 'GCE1', 'name' => 'Mit Log'], ['code' => 'GCE2', 'name' => 'Ohne Log'],
+    ['code' => 'GCE3', 'name' => 'Schon geloggt', 'own_log' => ['type' => 'Found it', 'date' => '2026-10-30', 'ts' => '2026-10-30T12:00:00Z']],
+], '<gpx/>', ['tour_date' => '2026-10-30']);
+$c11 = array_column($db11->getTour($t11)['caches'], null, 'code');
+$db11->updateCache($c11['GCE1']['id'], ['log' => 'Tolles Log', 'log_type' => "Didn't find it"]);
+$db11->updateCache($c11['GCE3']['id'], ['log' => 'Auch ein Log']);
+$k = array_column(FieldNotesExport::candidatesForMe($db11->getTour($t11)), null, 'code');
+check('Kandidat mit Log: gewählt, Status + Text', $k['GCE1']['selected'] && $k['GCE1']['log_type'] === "Didn't find it" && $k['GCE1']['text'] === 'Tolles Log'
+    && $k['GCE1']['estimated'] && $k['GCE1']['ts'] === '2026-10-30T09:00:00Z');
+check('Dateiname mit Datum + Tour', FieldNotesExport::filename(['id' => 45, 'tour_date' => '2026-10-31']) === 'geocache_visits_2026-10-31_tour45.txt'
+    && FieldNotesExport::filename(['id' => 7, 'tour_date' => null]) === 'geocache_visits_tour7.txt');
+check('ohne Log: nicht wählbar', !$k['GCE2']['available'] && !$k['GCE2']['selected']);
+check('schon selbst geloggt: abgewählt, echte Zeit', $k['GCE3']['already'] && !$k['GCE3']['selected'] && !$k['GCE3']['estimated']);
 
 // ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";
