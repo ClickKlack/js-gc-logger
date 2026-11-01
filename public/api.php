@@ -147,6 +147,33 @@ function export_candidates(Db $db, array $tour, array $config): array
     ];
 }
 
+/** Tour-IDs passend zu den Filtern im Request (wie list_tours); null = kein Filter aktiv. */
+function filtered_tour_ids(Db $db): ?array
+{
+    $filters = array_filter(array_intersect_key($_POST, array_flip(['code', 'date', 'companion', 'q'])),
+        static fn ($v): bool => is_string($v) && trim($v) !== '');
+    if ($filters === []) {
+        return null;
+    }
+    $ids = array_column($db->listTours($filters), 'id');
+    sort($ids);
+    return $ids;
+}
+
+/** Datei-Download statt JSON-Antwort (verwirft gepufferte Fremdausgaben). */
+function send_download(string $bytes, string $contentType, string $filename): never
+{
+    if (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    header('Content-Type: ' . $contentType);
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Content-Length: ' . strlen($bytes));
+    header('Cache-Control: no-store');
+    echo $bytes;
+    exit;
+}
+
 /** DB für Aktionen, die Speichern voraussetzen. */
 function storage_db(array $config): Db
 {
@@ -274,15 +301,39 @@ try {
             if ($entries === []) {
                 fail('Keine Caches mit Text ausgewählt.');
             }
-            $bytes = FieldNotesExport::build($entries);
-            if (ob_get_level() > 0) {
-                ob_end_clean();
-            }
-            header('Content-Type: text/plain; charset=UTF-16LE');
-            header('Content-Disposition: attachment; filename="' . FieldNotesExport::filename($tour, $result['recipient']) . '"');
-            header('Content-Length: ' . strlen($bytes));
-            echo $bytes;
-            exit;
+            send_download(FieldNotesExport::build($entries), 'text/plain; charset=UTF-16LE',
+                FieldNotesExport::filename($tour, $result['recipient']));
+        }
+
+        case 'backup_json': {
+            // Manueller Backup-Export (F8): Daten als lesbares JSON — bei aktiven Filtern
+            // nur die gefilterten Touren
+            $db   = storage_db($config);
+            $ids  = filtered_tour_ids($db);
+            $json = json_encode($db->exportJson($ids), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE);
+            send_download($json, 'application/json; charset=utf-8',
+                'gc_logger-backup-' . date('Y-m-d-Hi') . ($ids !== null ? '-gefiltert' : '') . '.json');
+        }
+
+        case 'backup_gpx': {
+            // Caches + eigene Logs als GPX (c:geo/GSAK/Karten-Apps) — Filter wie JSON
+            $db    = storage_db($config);
+            $ids   = filtered_tour_ids($db);
+            $tours = array_values(array_filter(array_map(
+                static fn ($id): ?array => $db->getTour((int) $id),
+                $ids ?? $db->pdo()->query('SELECT id FROM tour ORDER BY id')->fetchAll(PDO::FETCH_COLUMN)
+            )));
+            send_download(GpxExport::build($tours, (string) ($config['gc_username'] ?? '')), 'application/gpx+xml; charset=utf-8',
+                'gc_logger-caches-' . date('Y-m-d-Hi') . ($ids !== null ? '-gefiltert' : '') . '.gpx');
+        }
+
+        case 'backup_sqlite': {
+            // Manueller Backup-Export (F8): konsistente Kopie der Datenbank
+            $db   = storage_db($config);
+            $file = $db->exportSqliteCopy();
+            $data = (string) file_get_contents($file);
+            @unlink($file);
+            send_download($data, 'application/vnd.sqlite3', 'gc_logger-backup-' . date('Y-m-d-Hi') . '.sqlite');
         }
 
         case 'save_template': {

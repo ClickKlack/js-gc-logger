@@ -981,6 +981,7 @@ function showToursView() {
   flushEdits();
   TOUR_SECTIONS.forEach((sel) => hide($(sel)));
   show($('#view-tours'));
+  show($('#view-backup'));
   tourPage = 1;
   window.scrollTo(0, 0);
   fetchAndRenderTours($('#tour-list'), $('#load-status'));
@@ -1113,6 +1114,7 @@ async function fetchAndRenderTours(ul, statusEl) {
     const { tours, companions, total, page, pages } = await api('list_tours', { ...filters, page: String(tourPage) });
     fillCompanionFilter(companions || {});
     renderPager(page, pages, total);
+    renderBackupHint(active, total);
     ul.innerHTML = '';
     if (!tours.length) {
       ul.innerHTML = '<li class="muted">' + (active ? 'Keine Tour passt zu den Filtern.' : 'Noch keine gespeicherten Touren.') + '</li>';
@@ -1186,7 +1188,7 @@ async function openTour(id, opts = {}) {
     setTourDateUI(state.tourDate);
     $('#context-text').value = state.context;
 
-    const vt = $('#view-tours'); if (vt) hide(vt);
+    ['#view-tours', '#view-backup'].forEach((sel) => { const el = $(sel); if (el) hide(el); });
     if (state.context.trim()) {
       // Kontext steht schon: direkt zu den Caches
       placeTourFields(true);
@@ -1372,32 +1374,63 @@ $('#btn-export-download')?.addEventListener('click', async () => {
   const status = $('#export-status');
   status.textContent = 'Erzeuge Datei …';
   try {
-    const body = new FormData();
-    body.append('action', 'export_fieldnotes');
-    body.append('tour_id', String(state.tourId));
-    body.append('recipient', exportRecipient);
-    if (exportRecipient !== 'me') body.append('template', $('#export-template').value);
-    body.append('ids', JSON.stringify(ids));
-    const res = await fetch('api.php', { method: 'POST', body });
-    if ((res.headers.get('Content-Type') || '').includes('application/json')) {
-      const j = await res.json();
-      throw new Error(j.error || 'Unbekannter Fehler.');
-    }
-    const blob = await res.blob();
-    // Dateiname vom Server (Datum + Tour-Nummer + ggf. Empfänger)
-    const name = (/filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '') || [])[1] || 'geocache_visits.txt';
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    const data = { tour_id: String(state.tourId), recipient: exportRecipient, ids: JSON.stringify(ids) };
+    if (exportRecipient !== 'me') data.template = $('#export-template').value;
+    const name = await downloadPost('export_fieldnotes', data, 'geocache_visits.txt');
     status.textContent = '✓ ' + ids.length + ' Einträge exportiert (' + name + '). Jetzt bei geocaching.com unter Drafts → Upload hochladen.';
   } catch (ex) {
     status.textContent = 'Fehler: ' + ex.message;
   }
 });
+
+/* ---------- Downloads (Field Notes, Backup) ---------- */
+
+// POST an die API, Antwort als Datei speichern. Fehler kommen als JSON zurück.
+// Gibt den Dateinamen (vom Server) zurück.
+async function downloadPost(action, data, fallbackName) {
+  const body = new FormData();
+  body.append('action', action);
+  for (const [k, v] of Object.entries(data)) body.append(k, v);
+  const res = await fetch('api.php', { method: 'POST', body });
+  // Datei nur bei „attachment"; sonst ist es eine JSON-Fehlerantwort
+  const disp = res.headers.get('Content-Disposition') || '';
+  if (!res.ok || !disp.includes('attachment')) {
+    const j = await res.json().catch(() => ({}));
+    throw new Error(j.error || 'HTTP ' + res.status);
+  }
+  const blob = await res.blob();
+  const name = (/filename="([^"]+)"/.exec(disp) || [])[1] || fallbackName;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  return name;
+}
+
+// JSON und GPX folgen den aktiven Filtern; SQLite ist immer komplett
+async function backup(action, fallbackName, filtered) {
+  const status = $('#backup-status');
+  status.textContent = 'Erzeuge Backup …';
+  try {
+    await flushEdits();
+    status.textContent = '✓ ' + await downloadPost(action, filtered ? tourFilters() : {}, fallbackName) + ' heruntergeladen.';
+  } catch (ex) {
+    status.textContent = 'Fehler: ' + ex.message;
+  }
+}
+$('#btn-backup-json')?.addEventListener('click', () => backup('backup_json', 'gc_logger-backup.json', true));
+$('#btn-backup-gpx')?.addEventListener('click', () => backup('backup_gpx', 'gc_logger-caches.gpx', true));
+$('#btn-backup-sqlite')?.addEventListener('click', () => backup('backup_sqlite', 'gc_logger-backup.sqlite', false));
+
+function renderBackupHint(active, total) {
+  const el = $('#backup-filter-hint');
+  if (!el) return;
+  el.textContent = active ? 'ℹ Filter aktiv: JSON und GPX enthalten nur die ' + total + ' gefilterte(n) Tour(en). SQLite bleibt komplett.' : '';
+  el.classList.toggle('hidden', !active);
+}
 
 /* ---------- Debug (nur wenn in config.php aktiviert) ---------- */
 

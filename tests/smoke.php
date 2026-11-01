@@ -14,7 +14,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $root = dirname(__DIR__);
-foreach (['Auth', 'Gpx', 'FieldNotes', 'FieldNotesExport', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
+foreach (['Auth', 'Gpx', 'GpxExport', 'FieldNotes', 'FieldNotesExport', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
     require $root . '/lib/' . $cls . '.php';
 }
 
@@ -715,6 +715,72 @@ check('Vorlage je Begleiter ersetzt Standard (CRLF → LF)', $db12->companionTem
     && $db12->companionTemplate('die-steffi')['source'] === 'default');
 $db12->saveTemplate('Clicki17', '');
 check('leere Begleiter-Vorlage → wieder Standard', $db12->companionTemplate('Clicki17')['source'] === 'default');
+
+// ---------------------------------------------------------------------------
+section('Backup-Export (Schritt 13)');
+
+$db13 = new Db(tmpdir() . '/bk.sqlite');
+$t13  = $db13->createTour([['code' => 'GCK1', 'name' => 'Ümlaut 😀'], ['code' => 'GCK2', 'name' => 'Zwei']], '<gpx>roh</gpx>',
+    ['companions' => ['die-steffi'], 'tour_info' => 'Info']);
+$c13 = $db13->getTour($t13)['caches'];
+$db13->updateCache($c13[0]['id'], ['notes' => 'Notiz', 'log' => "Log\n\nmit Absatz"]);
+$db13->saveTemplate('die-steffi', 'Vorlage {cachename}');
+$db13->saveTemplate('', 'Standard');
+Auth::init(static fn (): Db => $db13, 'hash');
+Auth::issueToken('smoke');
+$j = $db13->exportJson();
+check('JSON: Meta + Touren + Caches', $j['app'] === 'gc_logger' && $j['schema_version'] >= 5 && count($j['tours']) === 1 && count($j['tours'][0]['caches']) === 2);
+check('JSON: Notiz, Log, Begleiter, Vorlagen, Settings', $j['tours'][0]['caches'][0]['notes'] === 'Notiz' && $j['tours'][0]['caches'][0]['log'] === "Log\n\nmit Absatz"
+    && $j['tours'][0]['companions'] === ['die-steffi'] && $j['companions'][0]['template'] === 'Vorlage {cachename}' && $j['settings']['fieldnotes_template'] === 'Standard');
+$enc = json_encode($j, JSON_UNESCAPED_UNICODE);
+check('JSON: ohne Token, ohne rohe GPX, ohne abgeleitete Duplikate', !str_contains($enc, 'token') && !str_contains($enc, 'gpx_raw')
+    && !str_contains($enc, '<gpx>roh') && !str_contains($enc, 'duplicates'));
+check('JSON: Umlaut/Emoji erhalten', str_contains($enc, 'Ümlaut 😀'));
+$copy = $db13->exportSqliteCopy();
+$cp   = new PDO('sqlite:' . $copy);
+check('SQLite-Kopie: integrity ok, Touren da, rohe GPX da', $cp->query('PRAGMA integrity_check')->fetchColumn() === 'ok'
+    && (int) $cp->query('SELECT COUNT(*) FROM tour')->fetchColumn() === 1
+    && gzuncompress((string) $cp->query('SELECT gpx_raw FROM tour')->fetchColumn()) === '<gpx>roh</gpx>');
+check('SQLite-Kopie: ohne Login-Tokens (Original behält sie)', (int) $cp->query('SELECT COUNT(*) FROM auth_token')->fetchColumn() === 0
+    && (int) $db13->pdo()->query('SELECT COUNT(*) FROM auth_token')->fetchColumn() === 1);
+$cp = null;
+@unlink($copy);
+
+// ---------------------------------------------------------------------------
+section('Backup gefiltert + GPX-Export');
+
+$db14 = new Db(tmpdir() . '/gx.sqlite');
+$tA14 = $db14->createTour([
+    ['code' => 'GCX1', 'name' => 'Dose & „Zitat" <b>', 'lat' => '54.1', 'lon' => '9.1', 'type' => 'Traditional Cache', 'owner' => 'Own',
+     'placed_by' => 'Own, Zwei', 'difficulty' => '1.5', 'terrain' => '2', 'container' => 'Small', 'country' => 'Denmark',
+     'hint' => 'Unter dem Stein', 'listing' => "Listing\nmit Zeile", 'short_description' => 'Kurz'],
+    ['code' => 'GCX2', 'name' => 'Ohne Log', 'lat' => '54.2', 'lon' => '9.2', 'type' => 'Unknown Cache'],
+], '<gpx/>', ['tour_date' => '2026-10-31', 'title' => 'Tour A']);
+$tB14 = $db14->createTour([['code' => 'GCX1', 'name' => 'Dose & „Zitat" <b>', 'lat' => '54.1', 'lon' => '9.1']], '<gpx/>',
+    ['tour_date' => '2026-11-01', 'title' => 'Tour B']);
+$cA14 = array_column($db14->getTour($tA14)['caches'], null, 'code');
+$db14->updateCache($cA14['GCX1']['id'], ['log' => "Log A mit Steuerzeichen \x07 und 😀", 'visited_ts' => '2026-10-31T11:00:00Z', 'log_type' => "Didn't find it"]);
+$db14->updateCache($db14->getTour($tB14)['caches'][0]['id'], ['log' => 'Log B']);
+
+$gpxOut = GpxExport::build([$db14->getTour($tA14), $db14->getTour($tB14)], 'ClickKlack');
+$sx = simplexml_load_string($gpxOut);
+check('GPX: gültiges XML, 2 Wegpunkte (GCX1 zusammengeführt)', $sx !== false && count($sx->wpt) === 2);
+$re = array_column(Gpx::parse($gpxOut, 'ClickKlack'), null, 'code');
+check('GPX → eigener Parser: Felder kommen zurück', $re['GCX1']['name'] === 'Dose & „Zitat" <b>' && $re['GCX1']['owner'] === 'Own'
+    && $re['GCX1']['placed_by'] === 'Own, Zwei' && $re['GCX1']['difficulty'] === '1.5' && $re['GCX1']['country'] === 'Denmark'
+    && $re['GCX1']['listing'] === "Listing\nmit Zeile", json_encode($re['GCX1'], JSON_UNESCAPED_UNICODE));
+check('GPX: Hint im Klartext (nicht ROT13)', $re['GCX1']['hint'] === 'Unter dem Stein');
+check('GPX: neuestes eigenes Log erkannt (Tour B, nur Datum)', $re['GCX1']['own_log'] === ['type' => 'Found it', 'date' => '2026-11-01', 'ts' => null],
+    json_encode($re['GCX1']['own_log']));
+$logs = $sx->wpt[0]->children('http://www.groundspeak.com/cache/1/0/1')->cache->logs->log;
+check('GPX: beide Logs mit Typ, Zeit, Finder, Text', count($logs) === 2 && (string) $logs[0]->type === "Didn't find it"
+    && (string) $logs[0]->date === '2026-10-31T11:00:00Z' && (string) $logs[0]->finder === 'ClickKlack'
+    && (string) $logs[0]->text === 'Log A mit Steuerzeichen  und 😀' && (string) $logs[1]->date === '2026-11-01T00:00:00Z');
+check('GPX: Cache ohne Log ohne <logs>', !isset($sx->wpt[1]->children('http://www.groundspeak.com/cache/1/0/1')->cache->logs));
+
+$jf = $db14->exportJson([$tB14]);
+check('JSON gefiltert: nur Tour B, als gefiltert markiert', $jf['filtered'] === true && count($jf['tours']) === 1 && $jf['tours'][0]['title'] === 'Tour B');
+check('JSON ungefiltert: alle', $db14->exportJson()['filtered'] === false && count($db14->exportJson()['tours']) === 2);
 
 // ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";

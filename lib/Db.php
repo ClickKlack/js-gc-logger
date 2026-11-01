@@ -288,6 +288,50 @@ final class Db
         return ['fixed' => $fixed, 'others' => $others];
     }
 
+    /**
+     * Schema-unabhängiger JSON-Export (F8): Touren mit Caches, Vorlagen und
+     * Einstellungen. Ohne Login-Tokens und ohne rohe GPX (die steckt im SQLite-Export).
+     * @param list<int>|null $tourIds nur diese Touren (Filter), null = alle
+     * @return array<string,mixed>
+     */
+    public function exportJson(?array $tourIds = null): array
+    {
+        $tours = [];
+        foreach ($tourIds ?? $this->pdo->query('SELECT id FROM tour ORDER BY id')->fetchAll(PDO::FETCH_COLUMN) as $id) {
+            $t = $this->getTour((int) $id);
+            unset($t['has_gpx_raw']);
+            foreach ($t['caches'] as &$c) {
+                unset($c['duplicates']);   // abgeleitet, nicht Teil der Daten
+            }
+            unset($c);
+            $tours[] = $t;
+        }
+        return [
+            'app'            => 'gc_logger',
+            'exported_at'    => gmdate('Y-m-d\TH:i:s\Z'),
+            'filtered'       => $tourIds !== null,
+            'schema_version' => (int) $this->pdo->query('PRAGMA user_version')->fetchColumn(),
+            'tours'          => $tours,
+            'companions'     => $this->pdo->query('SELECT name, template FROM companion ORDER BY name')->fetchAll(PDO::FETCH_ASSOC),
+            'settings'       => $this->pdo->query('SELECT key, value FROM setting ORDER BY key')->fetchAll(PDO::FETCH_KEY_PAIR) ?: new stdClass(),
+        ];
+    }
+
+    /**
+     * Konsistente SQLite-Kopie für den Download (VACUUM INTO), ohne Login-Tokens.
+     * Der Aufrufer löscht die Datei nach dem Senden.
+     */
+    public function exportSqliteCopy(): string
+    {
+        $target = dirname($this->path) . '/export-' . bin2hex(random_bytes(6)) . '.sqlite';
+        $this->pdo->prepare('VACUUM INTO ?')->execute([$target]);
+        $copy = new PDO('sqlite:' . $target);
+        $copy->exec('DELETE FROM auth_token');
+        $copy->exec('VACUUM');
+        $copy = null;
+        return $target;
+    }
+
     /** Hält tour_companion synchron zur JSON-Spalte tour.companions. */
     private function syncCompanions(int $tourId, array $companions): void
     {

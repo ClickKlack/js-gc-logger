@@ -89,6 +89,20 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
                 <button id="btn-page-next" class="ghost" type="button" aria-label="Nächste Seite">Weiter ›</button>
             </div>
         </section>
+
+        <!-- Backup: eigene Karte, sichtbar zusammen mit „Meine Touren" -->
+        <section id="view-backup" class="card hidden">
+            <h2>💾 Backup</h2>
+            <p class="muted">Touren zum Sichern herunterladen (ohne Login-Daten).</p>
+            <p id="backup-filter-hint" class="dup-box info hidden"></p>
+            <div class="row">
+                <button id="btn-backup-json" class="ghost" type="button">JSON (lesbar)</button>
+                <button id="btn-backup-gpx" class="ghost" type="button">GPX (Caches + Logs)</button>
+                <button id="btn-backup-sqlite" class="ghost" type="button">SQLite-Datenbank</button>
+            </div>
+            <p class="muted">GPX: alle Caches mit deinen Logs – für c:geo, GSAK oder Karten-Apps. SQLite: immer die komplette Datenbank (zum Wiederherstellen).</p>
+            <p id="backup-status" class="muted"></p>
+        </section>
         <?php endif; ?>
 
         <!-- Schritt 1: GPX + Tour-Infos -->
@@ -285,6 +299,6 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=34"></script>
+<script src="assets/app.js?v=37"></script>
 </body>
 </html>

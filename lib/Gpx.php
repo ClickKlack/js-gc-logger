@@ -58,8 +58,10 @@ final class Gpx
         unset($known['']);
 
         $creator     = strtolower((string) $sx['creator']);
+        // Eigene Exporte (gc_logger) schreiben Hints ebenfalls im Klartext.
         $decodeHints = strpos($creator, 'c:geo') === false
-                    && strpos($creator, 'cgeo') === false;
+                    && strpos($creator, 'cgeo') === false
+                    && strpos($creator, 'gc_logger') === false;
 
         $caches = [];
         foreach ($sx->wpt as $wpt) {
