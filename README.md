@@ -37,8 +37,9 @@ In `config.php` eintragen:
 
 ### 3. Lokal testen (optional)
 ```sh
-php -S localhost:8000 -t public
+php -S localhost:8000 -t public tests/router.php
 ```
+(Der Router ersetzt lokal die `public/.htaccess` für die Freigabe-Links `/share/…/`.)
 Browser auf <http://localhost:8000>, einloggen, eine Beispiel-GPX hochladen.
 
 ### 4. Auf Hetzner hochladen

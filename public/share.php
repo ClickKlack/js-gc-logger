@@ -10,8 +10,11 @@ declare(strict_types=1);
  * aus ist nur erreichbar, was der Link-Empfänger braucht (Ansicht, Vorschau, eigene
  * Vorlage speichern, Download). Kein Auth::start(), keine Gemini-/Backup-/Tour-Aktionen.
  *
- *   GET  share.php?t=TOKEN               → Seite (bzw. „abgelaufen oder ungültig")
- *   POST share.php  t=TOKEN action=…     → load | save_template | download
+ *   GET  share/TOKEN/  (bzw. share.php?t=TOKEN) → Seite (bzw. „abgelaufen oder ungültig")
+ *   POST share.php  t=TOKEN action=…            → load | save_template | download
+ *
+ * share/TOKEN/ schreibt public/.htaccess (Apache) bzw. tests/router.php
+ * (php -S) auf diese Datei um.
  */
 
 ini_set('display_errors', '0');
@@ -57,6 +60,18 @@ function share_template(): ?string
 
 $isPost = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST';
 $token  = (string) ($isPost ? ($_POST['t'] ?? '') : ($_GET['t'] ?? ''));
+
+// Basispfad der App aus der aufgerufenen Adresse: …/share/TOKEN/ oder …/share.php
+$path = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+if (preg_match('#^(.*)/share/([A-Za-z0-9_-]+)/?$#', $path, $m)) {
+    $base = $m[1];
+    if (!$isPost && $token === '') {
+        $token = $m[2];
+    }
+} else {
+    $base = rtrim(str_replace('\\', '/', dirname($path)), '/');
+}
+$baseHtml = htmlspecialchars($base, ENT_QUOTES);
 $me     = trim((string) ($config['gc_username'] ?? ''));
 
 $db    = null;
@@ -152,9 +167,9 @@ ob_end_flush();
     <meta name="robots" content="noindex, nofollow">
     <meta name="referrer" content="no-referrer">
     <title>Field Notes</title>
-    <link rel="stylesheet" href="assets/style.css?v=31">
+    <link rel="stylesheet" href="<?= $baseHtml ?>/assets/style.css?v=31">
 </head>
-<body>
+<body data-base="<?= $baseHtml ?>" data-token="<?= htmlspecialchars($share !== null ? $token : '', ENT_QUOTES) ?>">
 
 <header class="topbar">
     <h1>🧭 Field Notes</h1>
@@ -216,8 +231,8 @@ ob_end_flush();
 </main>
 
 <?php if ($share !== null): ?>
-<script src="assets/common.js?v=1"></script>
-<script src="assets/share.js?v=2"></script>
+<script src="<?= $baseHtml ?>/assets/common.js?v=1"></script>
+<script src="<?= $baseHtml ?>/assets/share.js?v=3"></script>
 <?php endif; ?>
 </body>
 </html>
