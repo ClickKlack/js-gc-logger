@@ -23,4 +23,12 @@ require __DIR__ . '/Prompts.php';
 require __DIR__ . '/BatchLogs.php';
 require __DIR__ . '/Db.php';
 
+Auth::init(
+    static function () use ($config): Db {
+        static $db = null;
+        return $db ??= new Db((string) $config['db_path']);
+    },
+    (string) ($config['password_hash'] ?? '')
+);
+
 return $config;

@@ -14,7 +14,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $root = dirname(__DIR__);
-foreach (['Gpx', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
+foreach (['Auth', 'Gpx', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
     require $root . '/lib/' . $cls . '.php';
 }
 
@@ -144,6 +144,48 @@ $t  = $fresh->getTour($id);
 check('frische DB: Tour mit Datum + Begleiter', $t['tour_date'] === Db::today() && $t['caches'][0]['visited_at'] === Db::today()
     && (int) $fresh->pdo()->query('SELECT COUNT(*) FROM tour_companion')->fetchColumn() === 1);
 check('frische DB: kein Backup', !is_dir(dirname((string) $fresh->pdo()->query('PRAGMA database_list')->fetch()['file']) . '/backup'));
+
+// ---------------------------------------------------------------------------
+section('Login: Angemeldet-bleiben-Token (Schritt 3)');
+
+$authDb = tmpdir() . '/auth.sqlite';
+$hashA  = password_hash('alt', PASSWORD_DEFAULT);
+$hashB  = password_hash('neu', PASSWORD_DEFAULT);
+$probe  = static function (string $hash, string $action, string $token = '') use ($authDb, $root): array {
+    $cmd = implode(' ', array_map('escapeshellarg', [PHP_BINARY, $root . '/tests/auth_probe.php', $authDb, $hash, $action, $token]));
+    return json_decode((string) shell_exec($cmd . ' 2>&1'), true) ?? [];
+};
+
+$token = (string) ($probe($hashA, 'issue')['token'] ?? '');
+check('Token erzeugt (64 Hex-Zeichen)', (bool) preg_match('/^[0-9a-f]{64}$/', $token));
+$authPdo = new PDO('sqlite:' . $authDb);
+$row = $authPdo->query('SELECT * FROM auth_token')->fetch(PDO::FETCH_ASSOC) ?: [];
+check('DB speichert nur den Hash', ($row['token_hash'] ?? '') === hash('sha256', $token) && !in_array($token, $row, true));
+check('Ablauf ~180 Tage', abs(strtotime($row['expires_at'] . ' UTC') - (time() + Auth::REMEMBER_DAYS * 86400)) < 60);
+
+check('ohne Session, mit Token → angemeldet', ($probe($hashA, 'authed', $token)['authed'] ?? null) === true);
+check('falsches Token → abgelehnt', ($probe($hashA, 'authed', str_repeat('0', 64))['authed'] ?? null) === false);
+
+// Gleitender Ablauf: Token künstlich fast abgelaufen → Nutzung verlängert wieder auf 180 Tage
+$authPdo->exec("UPDATE auth_token SET expires_at = datetime('now', '+1 day')");
+$probe($hashA, 'authed', $token);
+$exp = (string) $authPdo->query('SELECT expires_at FROM auth_token')->fetchColumn();
+check('gleitende Verlängerung', strtotime($exp . ' UTC') > time() + 170 * 86400);
+
+// Abgelaufenes Token
+$authPdo->exec("UPDATE auth_token SET expires_at = datetime('now', '-1 minute')");
+check('abgelaufenes Token → abgelehnt', ($probe($hashA, 'authed', $token)['authed'] ?? null) === false);
+check('abgelaufenes Token aufgeräumt', (int) $authPdo->query('SELECT COUNT(*) FROM auth_token')->fetchColumn() === 0);
+
+// Zwei Geräte; Logout trifft nur eines
+$t1 = (string) ($probe($hashA, 'issue')['token'] ?? '');
+$t2 = (string) ($probe($hashA, 'issue')['token'] ?? '');
+$probe($hashA, 'logout', $t1);
+check('Logout: Gerät 1 abgemeldet', ($probe($hashA, 'authed', $t1)['authed'] ?? null) === false);
+check('Logout: Gerät 2 weiter angemeldet', ($probe($hashA, 'authed', $t2)['authed'] ?? null) === true);
+
+// Passwortänderung macht alle Tokens ungültig
+check('Passwort geändert → Token ungültig', ($probe($hashB, 'authed', $t2)['authed'] ?? null) === false);
 
 // ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";
