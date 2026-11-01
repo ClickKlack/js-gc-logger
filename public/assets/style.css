@@ -78,6 +78,9 @@ body {
 label { display: block; margin: 10px 0; font-weight: 600; }
 label input[type="text"],
 label input[type="password"],
+label input[type="date"],
+label input[type="time"],
+label select,
 textarea,
 input[type="file"] {
   display: block;
@@ -145,10 +148,22 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 }
 .cache-item.active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(46,125,79,.2); }
 .cache-item.done .cname { text-decoration: line-through; color: var(--muted); }
-.cache-item .check { font-size: 18px; width: 20px; text-align: center; }
 .cache-item.done .check { color: var(--primary); }
-.cache-item .cname { flex: 1 1 auto; font-weight: 600; }
-.cache-item .ctype { font-size: 12px; color: var(--muted); }
+.cache-item .cmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.cache-item .cname { font-weight: 600; }
+.cache-item .csub { font-size: 12px; color: var(--muted); }
+.cache-item .check {
+  min-height: 36px; min-width: 36px; padding: 0; font-size: 18px; line-height: 1;
+  background: transparent; color: var(--ink); border: 1px solid transparent; border-radius: 8px;
+}
+.cache-item .check:hover { border-color: var(--line); }
+.cc { font-weight: 700; color: var(--ink); }
+.status { font-weight: 600; }
+.status.s-found { color: var(--primary); }
+.status.s-dnf { color: var(--error); }
+.status.s-other { color: var(--secondary); }
+.visit-row { display: flex; flex-wrap: wrap; gap: 0 10px; }
+.visit-row label { flex: 1 1 120px; margin: 6px 0; }
 .cache-item .moves { display: flex; gap: 4px; }
 .cache-item .move {
   min-height: 34px;

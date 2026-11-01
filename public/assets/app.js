@@ -5,6 +5,7 @@
 const state = {
   caches: [],     // je Eintrag zusätzlich: notes, log, done
   tourInfo: '',
+  tourDate: '',   // YYYY-MM-DD, Default-Datum der Caches
   companions: [],
   context: '',
   current: -1,    // Index des aktuell bearbeiteten Caches
@@ -81,7 +82,7 @@ function editValue(key) {
   if (key === 'order') return state.caches.map((c) => c.id);
   const [kind, a, b] = key.split(':');
   if (kind === 'tour') {
-    return { tour_info: state.tourInfo, companions: state.companions, context: state.context }[a];
+    return { tour_info: state.tourInfo, companions: state.companions, context: state.context, tour_date: state.tourDate }[a];
   }
   const c = state.caches.find((x) => String(x.id) === a);
   return c ? c[b] : undefined;
@@ -238,6 +239,7 @@ function applyLocalEdits(tour) {
         if (a === 'tour_info') state.tourInfo = e.v;
         if (a === 'companions') state.companions = e.v;
         if (a === 'context') state.context = e.v;
+        if (a === 'tour_date') state.tourDate = e.v;
         keep[key] = e;
       }
     } else {
@@ -312,7 +314,9 @@ $('#gpx-file')?.addEventListener('change', async (e) => {
     fd2.append('mode', mode);
     if (mode === 'new') {
       syncCompanionsFromUI(false);
-      fd2.append('meta', JSON.stringify({ tour_info: $('#tour-info').value, companions: state.companions }));
+      fd2.append('meta', JSON.stringify({
+        tour_info: $('#tour-info').value, companions: state.companions, tour_date: $('#tour-date').value,
+      }));
     } else {
       fd2.append('tour_id', String(match.tour_id));
     }
@@ -363,6 +367,27 @@ function setCompanionsUI(list) {
 document.querySelectorAll('.companion').forEach((cb) => cb.addEventListener('change', () => syncCompanionsFromUI()));
 $('#companions-extra')?.addEventListener('input', () => syncCompanionsFromUI());
 $('#tour-info')?.addEventListener('input', (e) => { state.tourInfo = e.target.value; markTour('tour_info'); });
+
+// Tour-Datum (zwei Eingabefelder: Einrichtung + Kontext-Karte)
+document.querySelectorAll('.tour-date').forEach((inp) => inp.addEventListener('change', (e) => {
+  const v = e.target.value;
+  if (!v) { e.target.value = state.tourDate; return; }
+  setTourDateUI(v);
+  if (!state.tourId || v === state.tourDate) { state.tourDate = v; return; }
+  // wie der Server: Caches mit altem Tour-Datum ohne Uhrzeit/Handeingabe ziehen mit
+  const old = state.tourDate;
+  state.caches.forEach((c) => {
+    if (c.visited_at === old && !c.visited_ts && !(c.manual_fields || []).includes('visited_at')) c.visited_at = v;
+  });
+  state.tourDate = v;
+  markTour('tour_date');
+  renderCacheList();
+  if (state.current >= 0) renderVisit(state.caches[state.current]);
+}));
+
+function setTourDateUI(v) {
+  document.querySelectorAll('.tour-date').forEach((inp) => { inp.value = v; });
+}
 
 function collectCompanions() {
   const list = [];
@@ -484,14 +509,22 @@ function renderCacheList() {
     li.className = 'cache-item' + (i === state.current ? ' active' : '') + (c.done ? ' done' : '');
     const last = state.caches.length - 1;
     li.innerHTML =
-      '<span class="check">' + (c.done ? '✓' : '○') + '</span>' +
-      '<span class="cname">' + escapeHtml(c.name) + '</span>' +
-      '<span class="ctype">' + escapeHtml(c.type || '') + '</span>' +
+      '<button type="button" class="check" aria-label="' + (c.done ? 'als offen markieren' : 'als erledigt markieren')
+        + '" title="erledigt umschalten">' + (c.done ? '✓' : '○') + '</button>' +
+      '<span class="cmain"><span class="cname">' + escapeHtml(c.name) + '</span>' +
+        '<span class="csub">' + cacheSubline(c) + '</span></span>' +
       '<span class="moves">' +
         '<button type="button" class="move" data-dir="up" aria-label="nach oben"' + (i === 0 ? ' disabled' : '') + '>▲</button>' +
         '<button type="button" class="move" data-dir="down" aria-label="nach unten"' + (i === last ? ' disabled' : '') + '>▼</button>' +
       '</span>';
     li.addEventListener('click', (e) => {
+      if (e.target.closest('.check')) {
+        e.stopPropagation();
+        c.done = !c.done;
+        markCache(c, 'done');
+        renderCacheList();
+        return;
+      }
       const btn = e.target.closest('.move');
       if (btn) {
         e.stopPropagation();
@@ -503,6 +536,28 @@ function renderCacheList() {
     ul.appendChild(li);
   });
   updateProgress();
+}
+
+// Unterzeile: Land · Status · Fundnummer/Datum/Uhrzeit · Typ
+function cacheSubline(c) {
+  const parts = [];
+  const cc = countryCode(c.country);
+  if (cc) parts.push('<span class="cc" title="' + escapeHtml(c.country) + '">' + escapeHtml(cc) + '</span>');
+  parts.push(statusBadge(c.log_type));
+  const when = [];
+  if (c.find_no) when.push('#' + c.find_no);
+  if (c.visited_at && c.visited_at !== state.tourDate) when.push(formatDate(c.visited_at).slice(0, 6));
+  if (c.visited_ts) when.push(berlinParts(c.visited_ts).time);
+  if (when.length) parts.push(escapeHtml(when.join(' · ')));
+  if (c.type) parts.push(escapeHtml(c.type));
+  return parts.join(' · ');
+}
+
+function statusBadge(type) {
+  const t = type || 'Found it';
+  const cls = t === "Didn't find it" ? 's-dnf'
+    : (['Found it', 'Attended', 'Webcam Photo Taken'].includes(t) ? 's-found' : 's-other');
+  return '<span class="status ' + cls + '">' + escapeHtml(LOG_TYPE_LABELS[t] || t) + '</span>';
 }
 
 function moveCache(i, delta) {
@@ -533,6 +588,7 @@ function selectCache(i) {
   const c = state.caches[i];
   $('#cache-title').textContent = c.name;
   $('#cache-meta').innerHTML = renderMeta(c);
+  renderVisit(c);
   const listing = (c.listing || '').trim();
   $('#cache-listing').textContent = listing || '(kein Listing in der GPX vorhanden)';
   $('#cache-listing-len').textContent = listing ? listing.length + ' Zeichen' : 'leer';
@@ -543,6 +599,74 @@ function selectCache(i) {
   rememberPosition();
   renderCacheList();
 }
+
+/* ---------- Log-Status, Datum, Uhrzeit ---------- */
+
+const LOG_TYPE_LABELS = {
+  'Found it': 'Fund',
+  "Didn't find it": 'DNF',
+  'Write note': 'Notiz',
+  'Attended': 'Teilgenommen',
+  'Will Attend': 'Werde teilnehmen',
+  'Webcam Photo Taken': 'Webcam-Foto',
+};
+
+// Event-/Webcam-Typen nur bei passenden Caches (dort gibt es kein „Found it")
+function logTypeOptions(c) {
+  const type = (c.type || '').toLowerCase();
+  let opts;
+  if (type.includes('event')) opts = ['Attended', 'Will Attend', 'Write note'];
+  else if (type.includes('webcam')) opts = ['Webcam Photo Taken', "Didn't find it", 'Write note'];
+  else opts = ['Found it', "Didn't find it", 'Write note'];
+  if (c.log_type && !opts.includes(c.log_type)) opts.unshift(c.log_type);
+  return opts;
+}
+
+function renderVisit(c) {
+  const sel = $('#cache-status');
+  sel.innerHTML = logTypeOptions(c)
+    .map((t) => '<option value="' + escapeHtml(t) + '">' + escapeHtml(LOG_TYPE_LABELS[t] || t) + '</option>').join('');
+  sel.value = c.log_type || logTypeOptions(c)[0];
+  $('#cache-date').value = c.visited_at || state.tourDate || '';
+  $('#cache-time').value = c.visited_ts ? berlinParts(c.visited_ts).time : '';
+}
+
+function markManual(c, field) {
+  c.manual_fields = [...new Set([...(c.manual_fields || []), field])];
+}
+
+$('#cache-status')?.addEventListener('change', (e) => {
+  const c = state.caches[state.current];
+  if (!c) return;
+  c.log_type = e.target.value;
+  markManual(c, 'log_type');
+  markCache(c, 'log_type');
+  renderCacheList();
+});
+
+$('#cache-date')?.addEventListener('change', (e) => {
+  const c = state.caches[state.current];
+  if (!c) return;
+  if (!e.target.value) { e.target.value = c.visited_at || state.tourDate; return; }
+  c.visited_at = e.target.value;
+  markManual(c, 'visited_at');
+  markCache(c, 'visited_at');
+  if (c.visited_ts) {            // Uhrzeit behalten, Zeitpunkt aufs neue Datum legen
+    c.visited_ts = berlinToUtcIso(c.visited_at, berlinParts(c.visited_ts).time);
+    markManual(c, 'visited_ts');
+    markCache(c, 'visited_ts');
+  }
+  renderCacheList();
+});
+
+$('#cache-time')?.addEventListener('change', (e) => {
+  const c = state.caches[state.current];
+  if (!c) return;
+  c.visited_ts = e.target.value ? berlinToUtcIso(c.visited_at || state.tourDate, e.target.value) : null;
+  markManual(c, 'visited_ts');
+  markCache(c, 'visited_ts');
+  renderCacheList();
+});
 
 function renderMeta(c) {
   const parts = [];
@@ -674,7 +798,7 @@ function closeTour() {
   saver.failed = false;
   if (state.tourId) storageDel(draftKey(state.tourId));
   storageDel(LAST_KEY);
-  Object.assign(state, { caches: [], tourInfo: '', companions: [], context: '', current: -1, tourId: null });
+  Object.assign(state, { caches: [], tourInfo: '', tourDate: todayLocal(), companions: [], context: '', current: -1, tourId: null });
   renderSaveIndicator();
 }
 
@@ -737,6 +861,7 @@ function loadTourIntoState(tour) {
   if (state.tourId && state.tourId !== tour.id) flushEdits();   // offene Edits der alten Tour noch senden
   state.tourId = tour.id;
   state.tourInfo = tour.tour_info || '';
+  state.tourDate = tour.tour_date || todayLocal();
   state.companions = tour.companions || [];
   state.context = tour.context || '';
   state.caches = (tour.caches || []).map((c) => ({
@@ -755,6 +880,7 @@ async function openTour(id, opts = {}) {
     const restored = applyLocalEdits(tour);
     $('#tour-info').value = state.tourInfo;
     setCompanionsUI(state.companions);
+    setTourDateUI(state.tourDate);
     $('#context-text').value = state.context;
 
     const vt = $('#view-tours'); if (vt) hide(vt);
@@ -790,11 +916,6 @@ async function openTour(id, opts = {}) {
 
 $('#btn-new')?.addEventListener('click', startNewTour);
 
-// Beim Start an der letzten Stelle weitermachen
-if (document.body.dataset.authed === '1' && window.GC_STORE) {
-  const last = storageGet(LAST_KEY);
-  if (last && last.tourId) openTour(last.tourId, { cacheId: last.cacheId });
-}
 
 /* ---------- Debug (nur wenn in config.php aktiviert) ---------- */
 
@@ -822,6 +943,50 @@ if (window.GC_DEBUG) {
 
 /* ---------- Utility ---------- */
 
+const TZ = 'Europe/Berlin';
+
+// UTC-Zeitpunkt → { date: 'YYYY-MM-DD', time: 'HH:MM' } in Ortszeit
+function berlinParts(iso) {
+  const p = {};
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date(iso)).forEach(({ type, value }) => { p[type] = value; });
+  return { date: p.year + '-' + p.month + '-' + p.day, time: p.hour + ':' + p.minute };
+}
+
+// Ortszeit (Datum + 'HH:MM') → UTC-ISO 'YYYY-MM-DDTHH:MM:SSZ' (Sommer-/Winterzeit beachtet)
+function berlinToUtcIso(date, time) {
+  const [y, mo, d] = date.split('-').map(Number);
+  const [h, mi] = time.split(':').map(Number);
+  const target = Date.UTC(y, mo - 1, d, h, mi);
+  let utc = target;
+  for (let k = 0; k < 2; k++) {
+    const p = berlinParts(new Date(utc).toISOString());
+    const [py, pmo, pd] = p.date.split('-').map(Number);
+    const [ph, pmi] = p.time.split(':').map(Number);
+    utc += target - Date.UTC(py, pmo - 1, pd, ph, pmi);
+  }
+  return new Date(utc).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+function todayLocal() {
+  return berlinParts(new Date().toISOString()).date;
+}
+
+// Ländername (GPX, englisch) → ISO-Kürzel für die kompakte Liste
+const COUNTRY_CODES = {
+  germany: 'DE', deutschland: 'DE', denmark: 'DK', netherlands: 'NL', belgium: 'BE', luxembourg: 'LU',
+  france: 'FR', switzerland: 'CH', austria: 'AT', liechtenstein: 'LI', italy: 'IT', spain: 'ES', portugal: 'PT',
+  poland: 'PL', czechia: 'CZ', 'czech republic': 'CZ', slovakia: 'SK', hungary: 'HU', slovenia: 'SI', croatia: 'HR',
+  sweden: 'SE', norway: 'NO', finland: 'FI', iceland: 'IS', 'united kingdom': 'GB', ireland: 'IE',
+  greece: 'GR', 'united states': 'US', canada: 'CA',
+};
+function countryCode(country) {
+  const n = (country || '').trim();
+  if (!n) return '';
+  return COUNTRY_CODES[n.toLowerCase()] || n.slice(0, 2).toUpperCase();
+}
+
 // UTC-ISO → 'TT.MM.JJJJ HH:MM' in Ortszeit (Europe/Berlin)
 function formatLocalDateTime(iso) {
   const d = new Date(iso);
@@ -841,4 +1006,14 @@ function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/* ---------- Start (am Ende: alle Konstanten sind definiert) ---------- */
+
+// Beim Start: Tour-Datum vorbelegen, an der letzten Stelle weitermachen
+state.tourDate = todayLocal();
+setTourDateUI(state.tourDate);
+if (document.body.dataset.authed === '1' && window.GC_STORE) {
+  const last = storageGet(LAST_KEY);
+  if (last && last.tourId) openTour(last.tourId, { cacheId: last.cacheId });
 }

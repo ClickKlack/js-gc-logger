@@ -103,6 +103,10 @@ if ($dbPath === null) {
     $backfilled = (int) $pdo->query('SELECT COUNT(DISTINCT tour_id) FROM tour_companion')->fetchColumn();
     check("tour_companion-Backfill ($backfilled/$withCompanions Touren)", $backfilled === $withCompanions);
 
+    check('Bestand: Events/Webcams nicht mehr „Found it"', (int) $pdo->query(
+        "SELECT COUNT(*) FROM cache_log WHERE log_type = 'Found it' AND COALESCE(manual_fields, '') NOT LIKE '%log_type%'
+           AND (lower(json_extract(gpx, '$.type')) LIKE '%event%' OR lower(json_extract(gpx, '$.type')) LIKE '%webcam%')"
+    )->fetchColumn() === 0);
     $backups = glob($tmp . '/backup/gc_logger-*.sqlite') ?: [];
     if ($versionBefore < (int) $pdo->query("PRAGMA user_version")->fetchColumn()) {
         check('Backup vor Migration angelegt', count($backups) === 1);
@@ -380,6 +384,43 @@ check('Prompt: keine GcNote/Logtexte', !str_contains($prompt, 'FINAL') && !str_c
 $batch = Prompts::logBatch('K', [$a + ['log_type' => 'Write note'], $p['GCAAA02'] + ['log_type' => 'Attended']]);
 check('Sammel-Prompt: Status je Cache', str_contains($batch, 'LOG-STATUS: NOTIZ') && str_contains($batch, 'LOG-STATUS: EVENT BESUCHT'));
 check('Prompt: Fund ist Normalfall', str_contains(Prompts::log('K', ['name' => 'X'], ''), 'LOG-STATUS: GEFUNDEN.'));
+
+// ---------------------------------------------------------------------------
+section('Status, Datum, Tour-Datum (Schritt 7)');
+
+$db7  = new Db(tmpdir() . '/s7.sqlite');
+$tid7 = $db7->createTour([
+    ['code' => 'GC7A', 'name' => 'A', 'type' => 'Traditional Cache'],
+    ['code' => 'GC7B', 'name' => 'B', 'type' => 'Traditional Cache'],
+    ['code' => 'GC7C', 'name' => 'C', 'type' => 'Traditional Cache'],
+    ['code' => 'GC7D', 'name' => 'D', 'type' => 'Traditional Cache',
+     'own_log' => ['type' => 'Found it', 'date' => '2026-10-30', 'ts' => '2026-10-30T10:00:00Z']],
+], '<gpx/>', ['tour_date' => '2026-11-02']);
+$c7 = array_column($db7->getTour($tid7)['caches'], null, 'code');
+$db7->updateCache($c7['GC7B']['id'], ['visited_at' => '2026-11-02']);   // von Hand bestätigt
+$db7->updateCache($c7['GC7C']['id'], ['visited_ts' => '2026-11-02T09:00:00Z'], false);
+$db7->updateTour($tid7, ['tour_date' => '2026-11-01']);
+$c7 = array_column($db7->getTour($tid7)['caches'], null, 'code');
+check('Tour-Datum zieht Caches mit altem Datum mit', $c7['GC7A']['visited_at'] === '2026-11-01');
+check('… außer von Hand gesetztes Datum', $c7['GC7B']['visited_at'] === '2026-11-02');
+check('… außer Caches mit Uhrzeit', $c7['GC7C']['visited_at'] === '2026-11-02' && $c7['GC7D']['visited_at'] === '2026-10-30');
+check('Tour-Datum gespeichert', $db7->getTour($tid7)['tour_date'] === '2026-11-01');
+
+$bad = static function (callable $fn): bool {
+    try { $fn(); } catch (InvalidArgumentException) { return true; }
+    return false;
+};
+check('ungültiges Tour-Datum abgelehnt', $bad(fn () => $db7->updateTour($tid7, ['tour_date' => '2026-13-01'])));
+check('unbekannter Log-Typ abgelehnt', $bad(fn () => $db7->updateCache($c7['GC7A']['id'], ['log_type' => 'Needs Maintenance'])));
+check('ungültiges Datum abgelehnt', $bad(fn () => $db7->updateCache($c7['GC7A']['id'], ['visited_at' => '1.11.2026'])));
+check('ungültiger Zeitpunkt abgelehnt', $bad(fn () => $db7->updateCache($c7['GC7A']['id'], ['visited_ts' => '2026-11-01 10:00'])));
+$db7->updateCache($c7['GC7A']['id'], ['log_type' => 'Write note', 'visited_ts' => '2026-11-01T13:05:00Z', 'done' => false]);
+$db7->updateCache($c7['GC7D']['id'], ['visited_ts' => null]);
+$c7 = array_column($db7->getTour($tid7)['caches'], null, 'code');
+check('gültige Werte gespeichert, manuell gemerkt', $c7['GC7A']['log_type'] === 'Write note' && $c7['GC7A']['visited_ts'] === '2026-11-01T13:05:00Z'
+    && $c7['GC7A']['done'] === false && in_array('visited_ts', $c7['GC7A']['manual_fields'], true));
+check('Uhrzeit löschbar', $c7['GC7D']['visited_ts'] === null);
+check('createTour: ungültiges Tour-Datum → heute', $db7->getTour($db7->createTour([['code' => 'GC7E', 'name' => 'E']], '<gpx/>', ['tour_date' => 'xx']))['tour_date'] === Db::today());
 
 // ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";

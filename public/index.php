@@ -19,7 +19,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=12">
+    <link rel="stylesheet" href="assets/style.css?v=13">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -73,6 +73,10 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             </label>
             <p id="gpx-status" class="muted"></p>
 
+            <label>Tour-Datum
+                <input type="date" class="tour-date" id="tour-date">
+            </label>
+
             <label>Allgemeine Infos zur Tour
                 <textarea id="tour-info" rows="3"
                     placeholder="z. B. Sonniger Samstag, Radtour entlang der Elbe, gute Laune …"></textarea>
@@ -101,6 +105,10 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             <textarea id="context-text" rows="4"
                 placeholder="Der generierte Kontext erscheint hier – du kannst ihn anpassen."></textarea>
             <p class="muted">Dieser Kontext wird für jedes Cache-Log als Hintergrund genutzt.</p>
+            <label>Tour-Datum
+                <input type="date" class="tour-date" id="tour-date-ctx">
+            </label>
+            <p class="muted">Gilt für alle Caches ohne eigene Uhrzeit bzw. ohne von Hand gesetztes Datum.</p>
         </section>
 
         <!-- Schritt 3: Caches abarbeiten -->
@@ -117,6 +125,18 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             <div id="cache-detail" class="detail hidden">
                 <h3 id="cache-title"></h3>
                 <div id="cache-meta" class="meta"></div>
+
+                <div class="visit-row">
+                    <label>Status
+                        <select id="cache-status"></select>
+                    </label>
+                    <label>Datum
+                        <input type="date" id="cache-date">
+                    </label>
+                    <label>Uhrzeit
+                        <input type="time" id="cache-time">
+                    </label>
+                </div>
 
                 <details id="cache-listing-wrap" class="listing-wrap">
                     <summary>Cache-Listing <span id="cache-listing-len" class="badge"></span></summary>
@@ -175,6 +195,6 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=13"></script>
+<script src="assets/app.js?v=14"></script>
 </body>
 </html>

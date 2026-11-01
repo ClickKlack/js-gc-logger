@@ -121,6 +121,19 @@ final class Db
                     $upd->execute([self::codesHash(explode("\n", (string) $codes)), $tourId]);
                 }
             },
+            // 3: Bestandsdaten — Events/Webcams kennen kein „Found it" (Migration 1 setzte es pauschal)
+            function (): void {
+                $this->pdo->exec(
+                    "UPDATE cache_log
+                     SET log_type = CASE WHEN lower(json_extract(gpx, '$.type')) LIKE '%event%' THEN 'Attended'
+                                         ELSE 'Webcam Photo Taken' END
+                     WHERE log_type = 'Found it'
+                       AND COALESCE(manual_fields, '') NOT LIKE '%log_type%'
+                       AND json_valid(gpx)
+                       AND (lower(json_extract(gpx, '$.type')) LIKE '%event%'
+                            OR lower(json_extract(gpx, '$.type')) LIKE '%webcam%')"
+                );
+            },
         ];
     }
 
@@ -159,6 +172,12 @@ final class Db
             error_log('[gc_logger] Backup fehlgeschlagen: ' . $e->getMessage());
             return null;
         }
+    }
+
+    private static function isDate(mixed $v): bool
+    {
+        return is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) === 1
+            && checkdate((int) substr($v, 5, 2), (int) substr($v, 8, 2), (int) substr($v, 0, 4));
     }
 
     /** UTC-ISO-Zeitpunkt → Datum in Ortszeit (YYYY-MM-DD). */
@@ -286,7 +305,7 @@ final class Db
     {
         $this->backup();
 
-        $tourDate   = (string) ($meta['tour_date'] ?? '') !== '' ? (string) $meta['tour_date'] : self::today();
+        $tourDate   = self::isDate($meta['tour_date'] ?? null) ? (string) $meta['tour_date'] : self::today();
         $companions = array_values((array) ($meta['companions'] ?? []));
         $title      = (string) ($meta['title'] ?? '') !== ''
             ? (string) $meta['title']
@@ -433,8 +452,17 @@ final class Db
     public function updateTour(int $id, array $fields): ?string
     {
         $fields = array_intersect_key($fields, array_flip(self::TOUR_FIELDS));
+        if (array_key_exists('tour_date', $fields) && !self::isDate($fields['tour_date'])) {
+            throw new InvalidArgumentException('Ungültiges Tour-Datum.');
+        }
         $this->pdo->beginTransaction();
         try {
+            $oldDate = null;
+            if (array_key_exists('tour_date', $fields)) {
+                $q = $this->pdo->prepare('SELECT tour_date FROM tour WHERE id = ?');
+                $q->execute([$id]);
+                $oldDate = $q->fetchColumn();
+            }
             $sets = [];
             $vals = [];
             foreach ($fields as $k => $v) {
@@ -454,6 +482,15 @@ final class Db
                 $this->pdo->rollBack();
                 return null;
             }
+            // Neues Tour-Datum gilt für Caches, die noch das alte tragen — außer sie haben
+            // eine echte Uhrzeit (eigenes Log/Feldnotiz) oder ein von Hand gesetztes Datum.
+            if (is_string($oldDate) && $oldDate !== $fields['tour_date']) {
+                $this->pdo->prepare(
+                    "UPDATE cache_log SET visited_at = ?, updated_at = datetime('now')
+                     WHERE tour_id = ? AND visited_at = ? AND visited_ts IS NULL
+                       AND COALESCE(manual_fields, '') NOT LIKE '%visited_at%'"
+                )->execute([$fields['tour_date'], $id, $oldDate]);
+            }
             $this->pdo->commit();
         } catch (Throwable $e) {
             $this->pdo->rollBack();
@@ -471,6 +508,17 @@ final class Db
     public function updateCache(int $id, array $fields, bool $manual = true): ?array
     {
         $fields = array_intersect_key($fields, array_flip(self::CACHE_FIELDS));
+        if (array_key_exists('log_type', $fields) && !in_array($fields['log_type'], self::LOG_TYPES, true)) {
+            throw new InvalidArgumentException('Unbekannter Log-Typ.');
+        }
+        if (array_key_exists('visited_at', $fields) && $fields['visited_at'] !== null && $fields['visited_at'] !== ''
+            && !self::isDate($fields['visited_at'])) {
+            throw new InvalidArgumentException('Ungültiges Datum.');
+        }
+        if (array_key_exists('visited_ts', $fields) && $fields['visited_ts'] !== null && $fields['visited_ts'] !== ''
+            && !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', (string) $fields['visited_ts'])) {
+            throw new InvalidArgumentException('Ungültiger Zeitpunkt.');
+        }
         $stmt = $this->pdo->prepare('SELECT tour_id, manual_fields FROM cache_log WHERE id = ?');
         $stmt->execute([$id]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);

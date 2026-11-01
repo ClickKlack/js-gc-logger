@@ -180,7 +180,11 @@ try {
 
         case 'update_tour': {
             $db = storage_db($config);
-            $updatedAt = $db->updateTour((int) ($_POST['id'] ?? 0), post_json('fields'));
+            try {
+                $updatedAt = $db->updateTour((int) ($_POST['id'] ?? 0), post_json('fields'));
+            } catch (InvalidArgumentException $e) {
+                fail($e->getMessage());
+            }
             if ($updatedAt === null) {
                 fail('Tour nicht gefunden.', 404);
             }
@@ -189,7 +193,11 @@ try {
 
         case 'update_cache': {
             $db  = storage_db($config);
-            $res = $db->updateCache((int) ($_POST['id'] ?? 0), post_json('fields'));
+            try {
+                $res = $db->updateCache((int) ($_POST['id'] ?? 0), post_json('fields'));
+            } catch (InvalidArgumentException $e) {
+                fail($e->getMessage());
+            }
             if ($res === null) {
                 fail('Cache nicht gefunden.', 404);
             }
