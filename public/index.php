@@ -321,6 +321,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=39"></script>
+<script src="assets/common.js?v=1"></script>
+<script src="assets/app.js?v=40"></script>
 </body>
 </html>
