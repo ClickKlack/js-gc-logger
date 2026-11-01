@@ -1,6 +1,6 @@
 # Spezifikation v3 — Öffentlicher Field-Notes-Export für Begleiter
 
-Status: **Abgestimmt (bereit für Umsetzung)** · Stand: 2026-11-01 · Quelle: `spec/ideas.md`
+Status: **Umgesetzt und abgenommen** (Test-Upload über Gast-Link am 01.11.2026 ok) · Stand: 2026-11-01 · Quelle: `spec/ideas.md`
 Basis: `spec/spec-v2.md` (insb. F6) und Code-Stand `367a271`.
 
 Legende: **[E]** = entschieden

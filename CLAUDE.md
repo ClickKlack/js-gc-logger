@@ -7,7 +7,7 @@ halten.
 
 Mobil-first Web-Tool zum Schreiben von Geocaching-Logs mit KI-Unterstützung. Läuft auf
 Hetzner Shared-Hosting (PHP). Siehe `spec/SPEC.md` für die vollständige Spezifikation
-(Erweiterungen: `spec/spec-v2.md`).
+(Erweiterungen: `spec/spec-v2.md`, `spec/spec-v3.md`).
 
 ## Stack & Konventionen
 
@@ -36,11 +36,15 @@ lib/                 Backend-Klassen (außerhalb des Web-Roots)
   Gemini.php         REST-Client (cURL) für generateContent
   Prompts.php        System-Instruction + Stufe-1/2-Templates
   BatchLogs.php      Sammel-Antwort auswerten (abgeschnittenes JSON, Müll-Filter)
+  Share.php          Freigabe-Links: Kandidaten über Touren, Gast-Whitelist, Dateiname
   Db.php             SQLite via PDO, Migrationen, Backups, Abfragen
 public/              Web-Root (docroot hierauf setzen, falls möglich)
   index.php          App-Shell + Login-Gate, rendert serverseitig den Auth-Status
-  api.php            JSON-Router (POST-Actions)
+  api.php            JSON-Router (POST-Actions), alles außer login/logout hinter Login
+  share.php          Gastseite für Freigabe-Links (ohne Login, eigene Mini-API)
+  assets/common.js   Gemeinsame Helfer (api, typeIcon, Datum) für app.js + share.js
   assets/app.js      Frontend-Logik (State-Maschine)
+  assets/share.js    Frontend der Gastseite
   assets/style.css   Mobile-first Styles
 tests/smoke.php      CLI-Smoketests (php tests/smoke.php), nur auf Temp-Kopie der DB
 tests/auth_probe.php Hilfsprozess für die Login-Tests
@@ -55,6 +59,15 @@ tests/auth_probe.php Hilfsprozess für die Login-Tests
 - WAL-Modus ist aktiv (`*.sqlite-wal`/`-shm` neben der DB sind normal).
 - Frontend speichert automatisch (localStorage sofort, API feldweise per Debounce:
   `update_tour`/`update_cache`/`reorder`); es gibt keinen Speichern-Button.
+
+## Freigabe-Links (öffentlich)
+
+- `public/share.php` ist die **einzige Seite ohne Login**. Nichts aus `api.php` dort
+  einbinden; nur die Actions `load`, `save_template`, `download` mit Token-Prüfung.
+- Gast-Ausgabe nur über die Whitelist in `Share::publicTours()` — neue Cache-Felder
+  tauchen dort nicht automatisch auf (KI-Log, Notizen, Kontext bleiben privat).
+- Gast darf nur `companion.template` des Link-Empfängers schreiben (`changed_by =
+  'share'`), nie die Standardvorlage. Links: Token im Klartext, 14 Tage, Lazy Purge.
 
 ## Field-Notes-Export
 

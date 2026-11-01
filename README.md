@@ -10,7 +10,7 @@ Cache für Cache ein fertiges Log mit Kopier-Button.
 - **Speicherung:** SQLite, automatisch; rollierende Backups vor jeder neuen Tour.
 
 Vollständige Spezifikation: siehe [`spec/SPEC.md`](spec/SPEC.md), Erweiterungen in
-[`spec/spec-v2.md`](spec/spec-v2.md).
+[`spec/spec-v2.md`](spec/spec-v2.md) und [`spec/spec-v3.md`](spec/spec-v3.md).
 
 ## Einrichtung in 5 Schritten
 
@@ -33,6 +33,7 @@ In `config.php` eintragen:
 - `gc_username` → dein geocaching.com-Name (erkennt dein Log in der GPX, Teil von
   `{mitcacher}` beim Field-Notes-Export für Begleiter)
 - `companions` → feste Begleiter (Haken in der Tour, oben in der Mitcacher-Suche)
+- `base_url` → optional, öffentliche Adresse für Freigabe-Links (leer = automatisch)
 
 ### 3. Lokal testen (optional)
 ```sh
@@ -69,6 +70,15 @@ Alles wird automatisch gespeichert (Status oben rechts), auch offline im Browser
 **🗂 Meine Touren**: Suche nach GC-Code, Jahr/Monat/Tag, Mitcacher und Freitext,
 doppelte Caches werden markiert. Darunter **💾 Backup** als JSON, GPX oder SQLite.
 
+**🔗 Freigabe-Links** (in Meine Touren oder im Field-Notes-Export „Als Link freigeben"):
+Begleiter und Touren wählen → Link kopieren/teilen. Der Begleiter öffnet ihn **ohne
+Login**, wählt seine Caches, passt die Vorlage an (optional als seine Vorlage speichern –
+dieselbe, die du für ihn pflegst) und lädt die Draft-Datei herunter. Bereits exportierte
+Caches sind markiert. Links gelten 14 Tage und lassen sich jederzeit widerrufen.
+
 ## Hinweis zum Datenschutz
 GPX-Inhalte und deine Notizen werden zur Textgenerierung an Google (Gemini) gesendet.
 Für öffentliche Geocaching-Logs ist das unkritisch.
+
+Über einen Freigabe-Link sieht der Begleiter nur Cachename, GC-Code, Typ, Datum/Uhrzeit,
+Log-Typ und den Text aus der Vorlage – nicht deine KI-Logs, Notizen oder den Tour-Kontext.
