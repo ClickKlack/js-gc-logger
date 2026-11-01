@@ -14,7 +14,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $root = dirname(__DIR__);
-foreach (['Auth', 'Gpx', 'GpxExport', 'FieldNotes', 'FieldNotesExport', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
+foreach (['Auth', 'Gpx', 'GpxExport', 'FieldNotes', 'FieldNotesExport', 'Share', 'Prompts', 'BatchLogs', 'Db'] as $cls) {
     require $root . '/lib/' . $cls . '.php';
 }
 
@@ -853,6 +853,59 @@ if (($srcS = copyLocalDb($root, tmpdir())) !== null) {
 } else {
     skip('lokale DB fehlt (Migration 6 auf Bestandsdaten)');
 }
+
+// ---------------------------------------------------------------------------
+section('Freigabe-Links: Export-Logik + Gast-Ansicht (spec-v3 Schritt 2)');
+
+$dbV = new Db(tmpdir() . '/share2.sqlite');
+$tV1 = $dbV->createTour([
+    ['code' => 'GCV1', 'name' => 'Dose „Eins"', 'type' => 'Traditional Cache', 'owner' => 'Own1',
+        'listing' => 'LISTINGGEHEIM', 'hint' => 'HINTGEHEIM'],
+    ['code' => 'GCV2', 'name' => 'Zwei', 'type' => 'Multi-cache', 'owner' => 'Own2',
+        'companion_logs' => [['name' => 'clicki17', 'type' => 'Found it', 'date' => '2026-10-31']]],
+    ['code' => 'GCV3', 'name' => 'Drei', 'type' => 'Traditional Cache'],
+], '<gpx/>', ['companions' => ['Clicki17', 'die-steffi'], 'tour_date' => '2026-10-31']);
+$tV2 = $dbV->createTour([['code' => 'GCV4', 'name' => 'Vier', 'type' => 'Earthcache']], '<gpx/>',
+    ['companions' => ['Clicki17'], 'tour_date' => '2026-11-01']);
+$dbV->updateTour($tV1, ['context' => 'KONTEXTGEHEIM', 'tour_info' => 'INFOGEHEIM', 'title' => 'Tour Eins']);
+$cV = array_column($dbV->getTour($tV1)['caches'], 'id', 'code');
+$dbV->updateCache($cV['GCV1'], ['notes' => 'NOTIZGEHEIM', 'log' => 'KILOGGEHEIM', 'visited_ts' => '2026-10-31T09:15:00Z']);
+$dbV->updateCache($cV['GCV3'], ['log_type' => "Didn't find it"]);
+
+$shV  = $dbV->createShare('Clicki17', [$tV1, $tV2]);
+$tpl  = "Mit {mitcacher}: {cachename} ({uhrzeit})\n\nDanke {owner}";
+$tsV  = Share::tours($dbV, $shV, $tpl, 'ClickKlack');
+check('Touren neueste zuerst', array_column($tsV, 'id') === [$tV2, $tV1]);
+check('{mitcacher} je Tour', $tsV[1]['mitcacher'] === 'die-steffi und ClickKlack' && $tsV[0]['mitcacher'] === 'ClickKlack');
+$byCode = array_column(array_merge(...array_column($tsV, 'caches')), null, 'code');
+check('Text aus Vorlage, Typ dabei', $byCode['GCV1']['text'] === "Mit die-steffi und ClickKlack: Dose „Eins\" (10:15)\n\nDanke Own1"
+    && $byCode['GCV4']['type'] === 'Earthcache', json_encode($byCode['GCV1'], JSON_UNESCAPED_UNICODE));
+check('Vorauswahl: Fund ja, schon geloggt nein, DNF nein', $byCode['GCV1']['selected'] && !$byCode['GCV2']['selected']
+    && $byCode['GCV2']['companion_logged'] && !$byCode['GCV3']['selected'] && $byCode['GCV4']['selected']);
+
+$json = json_encode(Share::publicTours($tsV), JSON_UNESCAPED_UNICODE);
+$leak = array_filter(['LISTINGGEHEIM', 'HINTGEHEIM', 'KONTEXTGEHEIM', 'INFOGEHEIM', 'NOTIZGEHEIM', 'KILOGGEHEIM'],
+    static fn (string $m): bool => str_contains($json, $m));
+check('Gast-Ansicht: keine Listing/Hint/Kontext/Info/Notiz/KI-Log', $leak === [], implode(', ', $leak));
+$pubCache = Share::publicTours($tsV)[1]['caches'][0];
+check('Gast-Ansicht: nur Whitelist-Felder', array_keys($pubCache) === ['id', 'code', 'name', 'log_type', 'ts', 'estimated', 'text',
+    'companion_logged', 'selected', 'type', 'exported_at', 'locked'], implode(',', array_keys($pubCache)));
+
+$entV = Share::entries($tsV, [$cV['GCV1'], $cV['GCV2'], 999999]);
+check('entries: nur IDs der Freigabe', array_column($entV, 'code') === ['GCV1', 'GCV2']);
+$single = FieldNotesExport::candidatesForCompanion($dbV->getTour($tV1), 'Clicki17', $tpl, 'ClickKlack');
+check('Datei = build() wie normaler Export', FieldNotesExport::build($entV)
+    === FieldNotesExport::build(array_values(array_filter($single, static fn ($c) => in_array($c['code'], ['GCV1', 'GCV2'], true)))));
+
+$dbV->markExported($shV['id'], array_column($entV, 'id'));
+$tsV2 = Share::tours($dbV, $dbV->findShare($shV['token']), $tpl, 'ClickKlack');
+$by2  = array_column(array_merge(...array_column($tsV2, 'caches')), null, 'code');
+check('exportiert → gesperrt, abgewählt, Datum gesetzt', $by2['GCV1']['locked'] && !$by2['GCV1']['selected']
+    && $by2['GCV1']['exported_at'] !== null && !$by2['GCV4']['locked']);
+check('entries: gesperrte nicht erneut', array_column(Share::entries($tsV2, [$cV['GCV1'], $by2['GCV4']['id']]), 'code') === ['GCV4']);
+
+check('Dateiname: mehrere Touren', Share::filename('Clicki17', $tsV) === 'geocache_visits_Clicki17_' . Db::today() . '.txt');
+check('Dateiname: eine Tour wie normaler Export', Share::filename('Clicki17', [$tsV[1]]) === 'geocache_visits_2026-10-31_tour' . $tV1 . '_Clicki17.txt');
 
 // ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";
