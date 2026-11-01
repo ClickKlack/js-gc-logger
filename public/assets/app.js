@@ -487,7 +487,9 @@ function collectCompanions() {
   document.querySelectorAll('.companion:checked').forEach((c) => list.push(c.value));
   const extra = $('#companions-extra').value.trim();
   if (extra) {
-    extra.split(',').map((s) => s.trim()).filter(Boolean).forEach((s) => list.push(s));
+    // nur am Komma trennen – Accountnamen dürfen „und", „&" usw. enthalten
+    extra.split(',').map((s) => s.trim()).filter(Boolean)
+      .forEach((s) => { if (!list.includes(s)) list.push(s); });
   }
   return list;
 }
@@ -510,6 +512,7 @@ $('#btn-context')?.addEventListener('click', async () => {
     state.context = context;
     markTour('context');
     $('#context-text').value = context;
+    placeTourFields(true);
     show($('#step-context'));
     show($('#step-caches'));
     show($('#step-save'));
@@ -962,6 +965,15 @@ function nextOpenIndex(from) {
 
 /* ---------- Schritt 4: Touren ---------- */
 
+// Tour-Daten (Datum, Infos, Begleiter): vor dem Kontext in der Einrichtung, danach in der Kontext-Karte
+function placeTourFields(inContext) {
+  const fields = $('#tour-fields');
+  const target = inContext ? $('#tour-fields-slot') : $('#btn-context');
+  if (!fields || !target) return;
+  if (inContext) target.appendChild(fields);
+  else target.before(fields);
+}
+
 // Abschnitte der Tour-Bearbeitung (nie gleichzeitig mit „Meine Touren" sichtbar)
 const TOUR_SECTIONS = ['#step-setup', '#step-context', '#step-caches', '#step-save'];
 
@@ -969,6 +981,7 @@ function showToursView() {
   flushEdits();
   TOUR_SECTIONS.forEach((sel) => hide($(sel)));
   show($('#view-tours'));
+  tourPage = 1;
   window.scrollTo(0, 0);
   fetchAndRenderTours($('#tour-list'), $('#load-status'));
 }
@@ -992,13 +1005,117 @@ function startNewTour() {
   location.reload();
 }
 
+/* Suche/Filter in „Meine Touren" */
+function tourFilters() {
+  const f = {
+    code: $('#f-code').value.trim(),
+    date: $('#f-day').value || parsePeriod($('#f-month').value),
+    companion: $('#f-companion').value,
+    q: $('#f-q').value.trim(),
+  };
+  Object.keys(f).forEach((k) => { if (!f[k]) delete f[k]; });
+  return f;
+}
+
+let filterTimer = null;
+let tourPage = 1;
+function onFilterChange() {
+  clearTimeout(filterTimer);
+  tourPage = 1;   // neue Filter → zurück auf Seite 1
+  filterTimer = setTimeout(() => fetchAndRenderTours($('#tour-list'), $('#load-status')), 300);
+}
+
+function goToPage(p) {
+  tourPage = p;
+  fetchAndRenderTours($('#tour-list'), $('#load-status')).then(() => $('#view-tours').scrollIntoView());
+}
+$('#btn-page-prev')?.addEventListener('click', () => goToPage(tourPage - 1));
+$('#btn-page-next')?.addEventListener('click', () => goToPage(tourPage + 1));
+
+function renderPager(page, pages, total) {
+  tourPage = page;
+  $('#tour-pager').classList.toggle('hidden', pages <= 1);
+  $('#page-info').textContent = 'Seite ' + page + ' / ' + pages + ' · ' + total + ' Touren';
+  $('#btn-page-prev').disabled = page <= 1;
+  $('#btn-page-next').disabled = page >= pages;
+}
+['#f-code', '#f-q'].forEach((sel) => $(sel)?.addEventListener('input', onFilterChange));
+$('#f-month')?.addEventListener('input', () => {
+  const v = $('#f-month').value.trim();
+  setPeriodInvalid(v !== '' && !parsePeriod(v));
+  if (parsePeriod(v)) $('#f-day').value = '';
+  onFilterChange();
+});
+$('#f-day')?.addEventListener('change', () => {
+  if ($('#f-day').value) { $('#f-month').value = ''; setPeriodInvalid(false); }
+  onFilterChange();
+});
+
+function setPeriodInvalid(bad) {
+  $('#f-month').classList.toggle('invalid', bad);
+  $('#f-month').setAttribute('aria-invalid', bad ? 'true' : 'false');
+  $('#f-month-hint').classList.toggle('hidden', !bad);
+}
+
+// „2025" → 2025 · „10.2026" / „10/2026" / „2026-10" → 2026-10 · sonst ''
+function parsePeriod(v) {
+  const s = (v || '').trim();
+  let m;
+  if (/^\d{4}$/.test(s)) return s;
+  if ((m = /^(\d{4})-(\d{1,2})$/.exec(s)) && +m[2] >= 1 && +m[2] <= 12) return m[1] + '-' + m[2].padStart(2, '0');
+  if ((m = /^(\d{1,2})[./](\d{4})$/.exec(s)) && +m[1] >= 1 && +m[1] <= 12) return m[2] + '-' + m[1].padStart(2, '0');
+  return '';
+}
+$('#f-companion')?.addEventListener('change', onFilterChange);
+$('#btn-filter-reset')?.addEventListener('click', () => {
+  ['#f-code', '#f-month', '#f-day', '#f-companion', '#f-q'].forEach((sel) => { $(sel).value = ''; });
+  setPeriodInvalid(false);
+  onFilterChange();
+});
+
+// Feste Begleiter (config) vorn, übrige alphabetisch – als zwei Gruppen
+function fillCompanionFilter({ fixed = [], others = [] }) {
+  const sel = $('#f-companion');
+  const cur = sel.value;
+  const opts = (names) => names.map((n) => '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>').join('');
+  sel.innerHTML = '<option value="">– alle –</option>'
+    + (fixed.length ? '<optgroup label="Feste Begleiter">' + opts(fixed) + '</optgroup>' : '')
+    + (others.length ? '<optgroup label="Weitere">' + opts(others) + '</optgroup>' : '');
+  sel.value = [...fixed, ...others].includes(cur) ? cur : '';
+}
+
+// Zeitraum kompakt: 31.10.2026 | 28.–31.10.2026 | 28.09.–02.10.2026
+function formatRange(a, b) {
+  if (!a) return '';
+  if (!b || a === b) return formatDate(a);
+  const [ya, ma, da] = a.split('-');
+  const [yb, mb, db] = b.split('-');
+  if (ya === yb && ma === mb) return da + '.–' + db + '.' + mb + '.' + yb;
+  if (ya === yb) return da + '.' + ma + '.–' + db + '.' + mb + '.' + yb;
+  return formatDate(a) + '–' + formatDate(b);
+}
+
+function tourMeta(t) {
+  const parts = [escapeHtml(formatRange(t.date_min || t.tour_date, t.date_max || t.tour_date))];
+  parts.push(t.done_count + '/' + t.cache_count + ' erledigt');
+  if (t.countries.length) parts.push(t.countries.map((c) => '<b>' + escapeHtml(countryCode(c)) + '</b>').join(' '));
+  const html = parts.map((p) => '<span class="part">' + p + '</span>').join(' · ');
+  // Begleiter dürfen umbrechen (lange Listen würden die Seite sonst verbreitern)
+  return html + (t.companions.length ? ' · <span class="part-wrap">👥 ' + escapeHtml(t.companions.join(', ')) + '</span>' : '');
+}
+
 async function fetchAndRenderTours(ul, statusEl) {
   if (statusEl) statusEl.textContent = 'Lade Touren …';
+  const filters = tourFilters();
+  const active = Object.keys(filters).length;
+  $('#filter-count').textContent = active ? active + ' aktiv' : '';
   try {
-    const { tours } = await api('list_tours');
+    const { tours, companions, total, page, pages } = await api('list_tours', { ...filters, page: String(tourPage) });
+    fillCompanionFilter(companions || {});
+    renderPager(page, pages, total);
     ul.innerHTML = '';
     if (!tours.length) {
-      ul.innerHTML = '<li class="muted">Noch keine gespeicherten Touren.</li>';
+      ul.innerHTML = '<li class="muted">' + (active ? 'Keine Tour passt zu den Filtern.' : 'Noch keine gespeicherten Touren.') + '</li>';
     }
     tours.forEach((t) => {
       const li = document.createElement('li');
@@ -1008,8 +1125,9 @@ async function fetchAndRenderTours(ul, statusEl) {
         '<span class="tour-info">' +
           (active ? '<span class="badge-active">● geöffnet</span><br>' : '') +
           '<b>#' + t.id + '</b> ' + escapeHtml(t.title || 'Tour') +
-          ' <span class="muted">(' + t.done_count + '/' + t.cache_count + ' · ' +
-          escapeHtml(t.created_at || '') + ')</span>' +
+          '<span class="tour-meta">' + tourMeta(t) + '</span>' +
+          (t.hits && t.hits.length ? '<span class="tour-hits">🔎 '
+            + t.hits.map((h) => escapeHtml(h.name) + ' (' + escapeHtml(h.code) + ')').join(', ') + '</span>' : '') +
         '</span>' +
         '<button type="button" class="tour-del" aria-label="Tour löschen" title="Tour löschen">🗑</button>';
       li.addEventListener('click', async (e) => {
@@ -1031,7 +1149,7 @@ async function fetchAndRenderTours(ul, statusEl) {
       ul.appendChild(li);
     });
     show(ul);
-    if (statusEl) statusEl.textContent = '';
+    if (statusEl) statusEl.textContent = active ? total + ' Tour(en) gefunden.' : '';
   } catch (ex) {
     if (statusEl) statusEl.textContent = 'Fehler: ' + ex.message;
   }
@@ -1071,6 +1189,7 @@ async function openTour(id, opts = {}) {
     const vt = $('#view-tours'); if (vt) hide(vt);
     if (state.context.trim()) {
       // Kontext steht schon: direkt zu den Caches
+      placeTourFields(true);
       hide($('#step-setup'));
       show($('#step-context'));
       show($('#step-caches'));
@@ -1080,6 +1199,7 @@ async function openTour(id, opts = {}) {
       selectCache(idx);
     } else {
       // Tour noch in der Einrichtung (vor „Kontext erzeugen")
+      placeTourFields(false);
       TOUR_SECTIONS.forEach((sel) => hide($(sel)));
       show($('#step-setup'));
       $('#btn-context').disabled = false;

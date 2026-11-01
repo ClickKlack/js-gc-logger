@@ -19,7 +19,7 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
     <title>Geocaching-Log-Helfer</title>
-    <link rel="stylesheet" href="assets/style.css?v=18">
+    <link rel="stylesheet" href="assets/style.css?v=25">
 </head>
 <body data-authed="<?= $authed ? '1' : '0' ?>" data-store="<?= $storeLogs ? '1' : '0' ?>">
 
@@ -58,8 +58,36 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             <div class="row">
                 <button id="btn-tours-new" class="primary" type="button">＋ Neue Tour</button>
             </div>
+            <details id="tour-filter" class="filter">
+                <summary>🔍 Suchen &amp; Filtern <span id="filter-count" class="badge"></span></summary>
+                <label>GC-Code (ganz oder Anfang)
+                    <input type="text" id="f-code" placeholder="z. B. GC61F3T oder GC61" autocapitalize="characters" autocomplete="off" spellcheck="false">
+                </label>
+                <div class="visit-row">
+                    <label>Jahr oder Monat
+                        <input type="text" id="f-month" placeholder="2025 oder 10.2026" inputmode="numeric" autocomplete="off"
+                               aria-describedby="f-month-hint">
+                        <span id="f-month-hint" class="field-hint hidden">Bitte z. B. 2025 oder 10.2026 eingeben</span>
+                    </label>
+                    <label>oder Tag
+                        <input type="date" id="f-day">
+                    </label>
+                </div>
+                <label>Mitcacher
+                    <select id="f-companion"><option value="">– alle –</option></select>
+                </label>
+                <label>Freitext (Titel, Cache-Name)
+                    <input type="text" id="f-q" placeholder="z. B. Tønder" autocomplete="off">
+                </label>
+                <button id="btn-filter-reset" class="ghost" type="button">Filter zurücksetzen</button>
+            </details>
             <p id="load-status" class="muted"></p>
             <ul id="tour-list" class="tour-list"></ul>
+            <div id="tour-pager" class="pager hidden">
+                <button id="btn-page-prev" class="ghost" type="button" aria-label="Vorherige Seite">‹ Zurück</button>
+                <span id="page-info" class="muted"></span>
+                <button id="btn-page-next" class="ghost" type="button" aria-label="Nächste Seite">Weiter ›</button>
+            </div>
         </section>
         <?php endif; ?>
 
@@ -79,8 +107,11 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             </label>
             <p class="muted fieldnotes-status">Status, Uhrzeit, Fundnummer und Reihenfolge aus c:geo – auch später in der Tour möglich.</p>
 
+            <!-- Tour-Daten: vor dem Kontext hier, danach in der Kontext-Karte (JS verschiebt den Block) -->
+            <div id="tour-fields">
             <label>Tour-Datum
                 <input type="date" class="tour-date" id="tour-date">
+                <span class="muted field-note">Gilt für alle Caches ohne eigene Uhrzeit bzw. ohne von Hand gesetztes Datum.</span>
             </label>
 
             <label>Allgemeine Infos zur Tour
@@ -96,10 +127,11 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
                         <?= htmlspecialchars($name, ENT_QUOTES) ?>
                     </label>
                 <?php endforeach; ?>
-                <label class="freitext">Weitere (Komma-getrennt)
+                <label class="freitext">Weitere (nur mit Komma trennen)
                     <input type="text" id="companions-extra" placeholder="Name1, Name2">
                 </label>
             </fieldset>
+            </div>
 
             <button id="btn-context" class="primary" type="button" disabled>Kontext erzeugen</button>
             <p id="context-status" class="muted"></p>
@@ -111,10 +143,9 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
             <textarea id="context-text" rows="4"
                 placeholder="Der generierte Kontext erscheint hier – du kannst ihn anpassen."></textarea>
             <p class="muted">Dieser Kontext wird für jedes Cache-Log als Hintergrund genutzt.</p>
-            <label>Tour-Datum
-                <input type="date" class="tour-date" id="tour-date-ctx">
-            </label>
-            <p class="muted">Gilt für alle Caches ohne eigene Uhrzeit bzw. ohne von Hand gesetztes Datum.</p>
+            <h3 class="sub-h">Tour-Daten</h3>
+            <p class="muted">Änderungen an Infos oder Begleitern fließen erst in einen neu erzeugten Kontext ein.</p>
+            <div id="tour-fields-slot"></div>
         </section>
 
         <!-- Schritt 3: Caches abarbeiten -->
@@ -210,6 +241,6 @@ $batchSize  = max(1, (int) ($config['batch_size'] ?? 5));
     window.GC_DEBUG = <?= $debug ? 'true' : 'false' ?>;
     window.GC_BATCH_SIZE = <?= $batchSize ?>;
 </script>
-<script src="assets/app.js?v=21"></script>
+<script src="assets/app.js?v=30"></script>
 </body>
 </html>

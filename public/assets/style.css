@@ -81,6 +81,7 @@ label { display: block; margin: 10px 0; font-weight: 600; }
 label input[type="text"],
 label input[type="password"],
 label input[type="date"],
+label input[type="month"],
 label input[type="time"],
 label select,
 textarea,
@@ -151,7 +152,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .cache-item.active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(46,125,79,.2); }
 .cache-item.done .cname { text-decoration: line-through; color: var(--muted); }
 .cache-item.done .check { color: var(--primary); }
-.cache-item .cmain { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.cache-item .cmain { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; display: flex; flex-direction: column; }
 .cache-item .cname { font-weight: 600; }
 .cache-item .csub { font-size: 13px; color: var(--muted); }
 .cache-item .csub .part { white-space: nowrap; }
@@ -241,8 +242,24 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   margin-bottom: 6px;
   cursor: pointer;
 }
-.tour-item .tour-info { flex: 1 1 auto; }
+.tour-item .tour-info { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .tour-item.active { border-color: var(--primary); }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.pager #page-info { text-align: center; flex: 1; }
+.filter { margin: 12px 0 4px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; }
+.filter summary { min-height: 46px; display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+.filter[open] { padding-bottom: 12px; }
+.filter input.invalid {
+  border: 2px solid var(--error);
+  background: rgba(192, 57, 43, .08);
+  outline-color: var(--error);   /* Fokusrahmen rot statt blau */
+}
+.field-note { display: block; margin-top: 4px; font-weight: 400; font-size: 13px; }
+.sub-h { margin: 16px 0 4px; padding-top: 12px; border-top: 1px solid var(--line); }
+.field-hint { display: block; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--error); }
+.tour-meta { display: block; font-size: 13px; color: var(--muted); }
+.tour-meta .part { white-space: nowrap; }
+.tour-hits { display: block; font-size: 13px; color: var(--ink); }
 .tour-item .badge-active { font-size: 12px; color: var(--primary); font-weight: 600; }
 .tour-del {
   flex: 0 0 auto;

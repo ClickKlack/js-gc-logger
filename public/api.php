@@ -314,7 +314,9 @@ try {
                 respond(['ok' => true, 'tours' => []]);
             }
             $db = new Db((string) $config['db_path']);
-            respond(['ok' => true, 'tours' => $db->listTours()]);
+            $filters = array_filter(array_intersect_key($_POST, array_flip(['code', 'date', 'companion', 'q'])), 'is_string');
+            $result  = $db->listToursPage($filters, (int) ($_POST['page'] ?? 1));
+            respond(['ok' => true, 'companions' => $db->companionChoices((array) ($config['companions'] ?? []))] + $result);
         }
 
         case 'get_tour': {

@@ -545,5 +545,73 @@ $db9->deleteTour($tA);
 check('alte Tour gelöscht → keine Warnung mehr', $db9->getTour($tB)['caches'][0]['duplicates'] === []);
 
 // ---------------------------------------------------------------------------
+section('Begleiter normalisieren (Migration 5)');
+
+check('nur Komma trennt; „und", „&", „;" bleiben im Namen', Db::splitCompanions(['die-steffi', 'Tom und Jerry', 'X & Y; Z', 'A, B', ' die-steffi '])
+    === ['die-steffi', 'Tom und Jerry', 'X & Y; Z', 'A', 'B']);
+if (isset($dbPath) && $dbPath !== null) {
+    $pdoReal = (new Db($dbPath))->pdo();
+    check('lokale DB-Kopie: „Ginsas und FrauOmegalanze" aufgeteilt',
+        (int) $pdoReal->query("SELECT COUNT(*) FROM tour_companion WHERE name = 'Ginsas und FrauOmegalanze'")->fetchColumn() === 0
+        && (int) $pdoReal->query("SELECT COUNT(*) FROM tour_companion WHERE name IN ('Ginsas', 'FrauOmegalanze')")->fetchColumn()
+           === (int) $pdoReal->query("SELECT COUNT(*) * 2 FROM tour WHERE companions LIKE '%FrauOmegalanze%'")->fetchColumn());
+}
+$db5 = new Db(tmpdir() . '/c.sqlite');
+$t5  = $db5->createTour([['code' => 'GC5', 'name' => 'x']], '<gpx/>');
+$db5->updateTour($t5, ['companions' => ['Tom und Jerry', 'A,B']]);
+check('update_tour: „und" bleibt, Komma trennt', $db5->getTour($t5)['companions'] === ['Tom und Jerry', 'A', 'B']);
+
+// ---------------------------------------------------------------------------
+section('Tour-Übersicht + Suche (Schritt 10)');
+
+$db10 = new Db(tmpdir() . '/l.sqlite');
+$t1 = $db10->createTour([['code' => 'GC61F3T', 'name' => 'SE-LP13 Totentanz', 'country' => 'Germany'],
+    ['code' => 'GCAB12', 'name' => 'Tønder Stierne', 'country' => 'Denmark']], '<gpx/>',
+    ['tour_date' => '2026-10-28', 'title' => 'Urlaub Dänemark', 'companions' => ['die-steffi', 'Felix_GC']]);
+$c1 = array_column($db10->getTour($t1)['caches'], null, 'code');
+$db10->updateCache($c1['GCAB12']['id'], ['visited_at' => '2026-10-31', 'done' => true]);
+$t2 = $db10->createTour([['code' => 'GC99XY', 'name' => 'Störtebekers Schatz', 'country' => 'Germany']], '<gpx/>',
+    ['tour_date' => '2026-09-15', 'title' => 'Sylt', 'companions' => ['Clicki17']]);
+$t3 = $db10->createTour([['code' => 'GC61AAA', 'name' => 'Anderer', 'country' => 'Germany']], '<gpx/>',
+    ['tour_date' => '2026-11-01', 'title' => 'Heimrunde', 'companions' => ['die-steffi']]);
+
+$ids = static fn (array $f) => array_column($db10->listTours($f), 'id');
+$all = array_column($db10->listTours(), null, 'id');
+check('ohne Filter: neueste zuerst', array_keys($all) === [$t3, $t1, $t2], json_encode(array_keys($all)));
+check('Zeitraum, Fortschritt, Begleiter, Länder', $all[$t1]['date_min'] === '2026-10-28' && $all[$t1]['date_max'] === '2026-10-31'
+    && $all[$t1]['done_count'] === 1 && $all[$t1]['cache_count'] === 2
+    && $all[$t1]['companions'] === ['Felix_GC', 'die-steffi'] && $all[$t1]['countries'] === ['Denmark', 'Germany'], json_encode($all[$t1]));
+check('GC-Code exakt', $ids(['code' => 'gc61f3t']) === [$t1]);
+check('GC-Code Präfix', $ids(['code' => 'GC61']) === [$t3, $t1]);
+check('GC-Code: Treffer-Cache mitgeliefert', array_column($db10->listTours(['code' => 'GC61F3T'])[0]['hits'], 'name') === ['SE-LP13 Totentanz']);
+check('Monat', $ids(['date' => '2026-10']) === [$t1]);
+check('Jahr', $ids(['date' => '2026']) === [$t3, $t1, $t2] && $ids(['date' => '2025']) === []);
+check('Tag trifft auch späteren Cache-Tag', $ids(['date' => '2026-10-31']) === [$t1] && $ids(['date' => '2026-10-29']) === []);
+check('Begleiter', $ids(['companion' => 'die-steffi']) === [$t3, $t1]);
+check('Freitext Titel', $ids(['q' => 'sylt']) === [$t2]);
+check('Freitext Cache-Name mit Umlaut, ohne Groß/Klein', $ids(['q' => 'STÖRTEBEKER']) === [$t2] && $ids(['q' => 'tønder']) === [$t1]);
+check('Freitext: Treffer-Cache mitgeliefert', array_column($db10->listTours(['q' => 'tønder'])[0]['hits'], 'code') === ['GCAB12']);
+check('Filter kombiniert (UND)', $ids(['companion' => 'die-steffi', 'date' => '2026-11']) === [$t3]
+    && $ids(['companion' => 'Clicki17', 'code' => 'GC61']) === []);
+check('ungültiges Datum wird ignoriert', count($ids(['date' => 'Oktober'])) === 3);
+$dbC = new Db(tmpdir() . '/ch.sqlite');
+$dbC->createTour([['code' => 'GCZZ1', 'name' => 'z']], '<gpx/>', ['companions' => ['zorro', 'Amun1978', 'Ärger', 'beta', 'die-steffi']]);
+$ch = $dbC->companionChoices(['die-steffi', 'Clicki17', 'Felix_GC', 'emblinux']);
+check('Mitcacher-Auswahl: feste in Config-Reihenfolge', $ch['fixed'] === ['die-steffi', 'Clicki17', 'Felix_GC', 'emblinux']);
+check('Mitcacher-Auswahl: übrige alphabetisch ohne Groß/Klein, Ä wie A', $ch['others'] === ['Amun1978', 'Ärger', 'beta', 'zorro'], json_encode($ch['others'], JSON_UNESCAPED_UNICODE));
+
+for ($i = 1; $i <= 22; $i++) {
+    $db10->createTour([['code' => 'GCP' . $i, 'name' => 'Seite ' . $i]], '<gpx/>', ['tour_date' => sprintf('2025-01-%02d', $i)]);
+}
+$p1 = $db10->listToursPage([], 1);
+$p2 = $db10->listToursPage([], 2);
+check('Seite 1: 20 Touren, 25 gesamt, 2 Seiten', count($p1['tours']) === 20 && $p1['total'] === 25 && $p1['pages'] === 2);
+check('Seite 2: Rest, keine Überschneidung', count($p2['tours']) === 5
+    && array_intersect(array_column($p1['tours'], 'id'), array_column($p2['tours'], 'id')) === []);
+check('Seite außerhalb → letzte Seite', $db10->listToursPage([], 9)['page'] === 2 && $db10->listToursPage([], 0)['page'] === 1);
+$pq = $db10->listToursPage(['q' => 'Seite'], 2);
+check('Freitext-Filter vor dem Blättern', $pq['total'] === 22 && count($pq['tours']) === 2);
+
+// ---------------------------------------------------------------------------
 echo "\n" . ($fails === 0 ? '✓ 0 Fehler' : "✗ {$fails} Fehler") . ($skips ? ", {$skips} übersprungen" : '') . "\n";
 exit($fails === 0 ? 0 : 1);

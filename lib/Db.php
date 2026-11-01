@@ -139,6 +139,25 @@ final class Db
                 $this->addColumnIfMissing('tour', 'fieldnotes_at', 'TEXT');
                 $this->addColumnIfMissing('cache_log', 'fieldnote_ts', 'TEXT');
             },
+            // 5: Bestandsdaten — gezielt falsch erfasste Begleiter-Einträge aufteilen.
+            //    Bewusst nur diese bekannten Einträge: Accountnamen dürfen „und", „&" usw. enthalten.
+            function (): void {
+                $fix  = ['Ginsas und FrauOmegalanze' => ['Ginsas', 'FrauOmegalanze']];
+                $rows = $this->pdo->query("SELECT id, companions FROM tour WHERE json_valid(companions)")->fetchAll(PDO::FETCH_NUM);
+                $upd  = $this->pdo->prepare('UPDATE tour SET companions = ? WHERE id = ?');
+                foreach ($rows as [$id, $json]) {
+                    $old = json_decode((string) $json, true) ?: [];
+                    $new = [];
+                    foreach ($old as $name) {
+                        $new = array_merge($new, $fix[$name] ?? [$name]);
+                    }
+                    $new = self::splitCompanions($new);
+                    if ($new !== $old) {
+                        $upd->execute([json_encode($new, JSON_UNESCAPED_UNICODE), $id]);
+                        $this->syncCompanions((int) $id, $new);
+                    }
+                }
+            },
         ];
     }
 
@@ -202,6 +221,43 @@ final class Db
     public function knownCompanions(): array
     {
         return $this->pdo->query('SELECT DISTINCT name FROM tour_companion ORDER BY name')->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    /**
+     * Begleiterliste normalisieren: nur am Komma teilen (Accountnamen dürfen „und",
+     * „&", „;" enthalten), trimmen, leere und doppelte entfernen (Reihenfolge bleibt).
+     * @param list<mixed> $names
+     * @return list<string>
+     */
+    public static function splitCompanions(array $names): array
+    {
+        $out = [];
+        foreach ($names as $n) {
+            foreach (explode(',', (string) $n) as $part) {
+                $part = trim($part);
+                if ($part !== '' && !in_array($part, $out, true)) {
+                    $out[] = $part;
+                }
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Auswahl für den Mitcacher-Filter: feste Begleiter (config) in ihrer Reihenfolge,
+     * danach alle übrigen je verwendeten alphabetisch (ohne Groß/Klein).
+     * @param list<string> $fixed
+     * @return array{fixed: list<string>, others: list<string>}
+     */
+    public function companionChoices(array $fixed): array
+    {
+        $fixed  = array_values(array_unique(array_filter(array_map('trim', array_map('strval', $fixed)), 'strlen')));
+        $others = array_values(array_diff($this->knownCompanions(), $fixed));
+        // Sortierschlüssel: klein, Umlaute/Sonderbuchstaben wie Grundbuchstabe (Ä wie A)
+        $key = static fn (string $s): string => strtr(mb_strtolower($s),
+            ['ä' => 'a', 'ö' => 'o', 'ü' => 'u', 'ß' => 'ss', 'ø' => 'o', 'å' => 'a', 'æ' => 'ae', 'é' => 'e', 'è' => 'e']);
+        usort($others, static fn (string $a, string $b): int => strcmp($key($a), $key($b)) ?: strcmp($a, $b));
+        return ['fixed' => $fixed, 'others' => $others];
     }
 
     /** Hält tour_companion synchron zur JSON-Spalte tour.companions. */
@@ -472,7 +528,7 @@ final class Db
             $vals = [];
             foreach ($fields as $k => $v) {
                 if ($k === 'companions') {
-                    $list = array_values(array_filter(array_map('trim', array_map('strval', (array) $v)), 'strlen'));
+                    $list = self::splitCompanions((array) $v);
                     $this->syncCompanions($id, $list);
                     $v = json_encode($list, JSON_UNESCAPED_UNICODE);
                 }
@@ -709,15 +765,107 @@ final class Db
         return $v === false ? null : (string) $v;
     }
 
-    /** @return array<int, array<string,mixed>> */
-    public function listTours(): array
+    /**
+     * Touren für die Übersicht, neueste zuerst. Filter (UND-verknüpft, leer = egal):
+     *   code      GC-Code exakt oder Präfix ("GC61" trifft "GC61F3T")
+     *   date      Tag "YYYY-MM-DD", Monat "YYYY-MM" oder Jahr "YYYY": mind. ein Cache darin
+     *   companion Begleiter (exakt)
+     *   q         Freitext in Tour-Titel oder Cache-Namen (ohne Groß/Klein, auch Umlaute)
+     * Bei code/q werden die passenden Caches als "hits" mitgeliefert.
+     * @param array<string,string> $f
+     * @return list<array<string,mixed>>
+     */
+    public function listTours(array $f = []): array
     {
-        $sql = 'SELECT t.id, t.created_at, t.title, t.context,
+        return $this->listToursPage($f, 1, PHP_INT_MAX)['tours'];
+    }
+
+    /** Touren je Seite (nach dem Filtern geblättert). */
+    public const TOURS_PER_PAGE = 20;
+
+    /**
+     * Wie listTours, aber seitenweise.
+     * @param array<string,string> $f
+     * @return array{tours: list<array<string,mixed>>, total: int, page: int, pages: int}
+     */
+    public function listToursPage(array $f, int $page, int $perPage = self::TOURS_PER_PAGE): array
+    {
+        $code      = strtoupper(trim((string) ($f['code'] ?? '')));
+        $date      = trim((string) ($f['date'] ?? ''));
+        $companion = trim((string) ($f['companion'] ?? ''));
+        $q         = trim((string) ($f['q'] ?? ''));
+
+        $where = [];
+        $args  = [];
+        if ($code !== '') {
+            $where[] = 'EXISTS (SELECT 1 FROM cache_log x WHERE x.tour_id = t.id AND upper(x.code) LIKE ?)';
+            $args[]  = $code . '%';
+        }
+        if (preg_match('/^\d{4}(-\d{2}(-\d{2})?)?$/', $date)) {
+            $where[] = 'EXISTS (SELECT 1 FROM cache_log x WHERE x.tour_id = t.id AND COALESCE(x.visited_at, t.tour_date) LIKE ?)';
+            $args[]  = $date . '%';
+        }
+        if ($companion !== '') {
+            $where[] = 'EXISTS (SELECT 1 FROM tour_companion tc WHERE tc.tour_id = t.id AND tc.name = ?)';
+            $args[]  = $companion;
+        }
+
+        $sql = "SELECT t.id, t.created_at, t.title, t.tour_date,
                        (SELECT COUNT(*) FROM cache_log c WHERE c.tour_id = t.id) AS cache_count,
-                       (SELECT COUNT(*) FROM cache_log c WHERE c.tour_id = t.id AND c.done = 1) AS done_count
-                FROM tour t
-                ORDER BY t.id DESC';
-        return $this->pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                       (SELECT COUNT(*) FROM cache_log c WHERE c.tour_id = t.id AND c.done = 1) AS done_count,
+                       (SELECT MIN(COALESCE(c.visited_at, t.tour_date)) FROM cache_log c WHERE c.tour_id = t.id) AS date_min,
+                       (SELECT MAX(COALESCE(c.visited_at, t.tour_date)) FROM cache_log c WHERE c.tour_id = t.id) AS date_max,
+                       (SELECT group_concat(name, char(10)) FROM (SELECT name FROM tour_companion tc
+                            WHERE tc.tour_id = t.id ORDER BY name)) AS companions,
+                       (SELECT group_concat(country, char(10)) FROM (SELECT DISTINCT json_extract(c.gpx, '$.country') AS country
+                            FROM cache_log c WHERE c.tour_id = t.id AND json_valid(c.gpx)
+                              AND COALESCE(json_extract(c.gpx, '$.country'), '') <> '' ORDER BY country)) AS countries
+                FROM tour t"
+            . ($where !== [] ? ' WHERE ' . implode(' AND ', $where) : '')
+            . ' ORDER BY COALESCE(date_max, t.tour_date) DESC, t.id DESC';
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($args);
+        $tours = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        // Treffer-Caches (und Freitext-Filter) in PHP: mb_stripos kann auch Umlaute
+        $cacheStmt = $this->pdo->prepare('SELECT code, name FROM cache_log WHERE tour_id = ? ORDER BY position');
+        $out = [];
+        foreach ($tours as $t) {
+            $t['id']          = (int) $t['id'];
+            $t['cache_count'] = (int) $t['cache_count'];
+            $t['done_count']  = (int) $t['done_count'];
+            $t['companions']  = $t['companions'] !== null ? explode("\n", $t['companions']) : [];
+            $t['countries']   = $t['countries'] !== null ? explode("\n", $t['countries']) : [];
+            $t['hits']        = [];
+            if ($code !== '' || $q !== '') {
+                $cacheStmt->execute([$t['id']]);
+                $caches = $cacheStmt->fetchAll(PDO::FETCH_ASSOC);
+                if ($q !== '') {
+                    $nameHits = array_values(array_filter($caches, static fn (array $c): bool =>
+                        mb_stripos((string) $c['name'], $q) !== false));
+                    if ($nameHits === [] && mb_stripos((string) $t['title'], $q) === false) {
+                        continue;
+                    }
+                    $t['hits'] = $nameHits;
+                }
+                if ($code !== '') {
+                    $codeHits = array_filter($caches, static fn (array $c): bool =>
+                        str_starts_with(strtoupper((string) $c['code']), $code));
+                    $t['hits'] = array_values(array_unique(array_merge($t['hits'], $codeHits), SORT_REGULAR));
+                }
+            }
+            $out[] = $t;
+        }
+
+        $total = count($out);
+        $pages = max(1, (int) ceil($total / max(1, $perPage)));
+        $page  = min(max(1, $page), $pages);
+        return [
+            'tours' => array_slice($out, ($page - 1) * $perPage, $perPage),
+            'total' => $total,
+            'page'  => $page,
+            'pages' => $pages,
+        ];
     }
 
     /** @return array<string,mixed>|null */
